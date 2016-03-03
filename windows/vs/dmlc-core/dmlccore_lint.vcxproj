@@ -163,7 +163,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <CustomBuild Include="C:\Workspace\MxNet.cpp\windows\vs\dmlc-core\CMakeFiles\d86d282f514b69518e900a6a539f02a6\dmlccore_lint.rule">
       <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'"></Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
-"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/Python.exe -DPYTHON3_EXECUTABLE=C:/Python34/Python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
+"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/python.exe -DPYTHON3_EXECUTABLE=C:/Python34/python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
@@ -176,7 +176,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
       <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'"></Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
-"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/Python.exe -DPYTHON3_EXECUTABLE=C:/Python34/Python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
+"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/python.exe -DPYTHON3_EXECUTABLE=C:/Python34/python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
@@ -189,7 +189,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
       <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'"></Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
-"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/Python.exe -DPYTHON3_EXECUTABLE=C:/Python34/Python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
+"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/python.exe -DPYTHON3_EXECUTABLE=C:/Python34/python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
@@ -202,7 +202,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
       <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'"></Message>
       <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
-"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/Python.exe -DPYTHON3_EXECUTABLE=C:/Python34/Python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
+"C:\Program Files (x86)\CMake\bin\cmake.exe" -DMSVC=1 -DPYTHON2_EXECUTABLE=C:/Python27/python.exe -DPYTHON3_EXECUTABLE=C:/Python34/python.exe -DLINT_DIRS=include src scripts -P C:/Workspace/MxNet.cpp/dmlc-core/cmake/lint.cmake
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone

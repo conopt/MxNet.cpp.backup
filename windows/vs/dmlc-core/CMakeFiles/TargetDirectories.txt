@@ -1,0 +1,4 @@
+C:/Workspace/MxNet.cpp/windows/vs/dmlc-core/CMakeFiles/dmlccore.dir
+C:/Workspace/MxNet.cpp/windows/vs/dmlc-core/CMakeFiles/ALL_BUILD.dir
+C:/Workspace/MxNet.cpp/windows/vs/dmlc-core/CMakeFiles/ZERO_CHECK.dir
+C:/Workspace/MxNet.cpp/windows/vs/dmlc-core/CMakeFiles/dmlccore_lint.dir
