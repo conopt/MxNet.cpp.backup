@@ -1,0 +1,71 @@
+{
+  "numPorts": "1",
+  "jarPath": "hadoop-yarn-applications-popcorn-2.6.0.jar",
+  "arguments": {
+    "containerConfs/scheduler/envVars/PORT_ARG_0": "wsp",
+    "containerConfs/server/envVars/PORT_ARG_0": "wsp",
+    "containerConfs/worker/envVars/PORT_ARG_0": "wsp",
+
+    "containerConfs/scheduler/numProcesses": "sn",
+    "containerConfs/server/numProcesses": "sn",
+    "containerConfs/worker/numProcesses": "wn",
+
+    "containerConfs/scheduler/processMemory": "m",
+    "containerConfs/scheduler/processVCores": "c",
+    "containerConfs/server/processMemory": "m",
+    "containerConfs/server/processVCores": "c",
+    "containerConfs/worker/processMemory": "m",
+    "containerConfs/worker/processVCores": "c"
+  },
+  "containerConfs": {
+    "scheduler": {
+      "numProcesses": "1",
+      "processMemory": "4096",
+      "processVCores": "4",
+      "waitForCompletion": "true",
+      "observeOutput": "true",
+      "executeFilename": "MxnetTestApp.exe",
+      "machineListFormat": "%IP% %PORT_ARG_0%",
+      "resourcePaths": ["dlls"],
+      "envVars": {
+        "DATA_PATH": "/v-lxini/v.bin",
+        "DMLC_ROLE": "scheduler",
+        "DMLC_NUM_SERVER": "1",
+        "DMLC_NUM_WORKER": "1"
+      }
+    },
+    "server": {
+      "numProcesses": "1",
+      "processMemory": "4096",
+      "processVCores": "4",
+      "waitForCompletion": "true",
+      "observeOutput": "true",
+      "executeFilename": "MxnetTestApp.exe",
+      "machineListFormat": "%IP% %PORT_ARG_0%",
+      "resourcePaths": ["dlls"],
+      "envVars": {
+        "DATA_PATH": "/v-lxini/v.bin",
+        "DMLC_ROLE": "server",
+        "DMLC_NUM_SERVER": "1",
+        "DMLC_NUM_WORKER": "1"
+      }
+    },
+    "worker": {
+      "numProcesses": "1",
+      "processMemory": "4096",
+      "processVCores": "4",
+      "waitForCompletion": "true",
+      "observeOutput": "true",
+      "executeFilename": "MxnetTestApp.exe",
+      "machineListFormat": "%IP% %PORT_ARG_0%",
+      "resourcePaths": ["dlls"],
+      "envVars": {
+        "DATA_PATH": "/v-lxini/v.bin",
+        "DMLC_ROLE": "worker",
+        "DMLC_NUM_SERVER": "1",
+        "DMLC_NUM_WORKER": "1"
+      }
+    }
+  },
+  "launchOrder": ["scheduler", "server", "worker"]
+}
