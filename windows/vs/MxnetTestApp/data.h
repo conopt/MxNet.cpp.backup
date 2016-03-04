@@ -6,20 +6,29 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <memory>
 
 #include "logging.h"
+#include "dmlc/io.h"
 
 class DataReader {
 public:
-  DataReader(const std::string& filePath,
+  DataReader(dmlc::SeekStream* stream,
+    size_t streamSize,
     int recordSize,
+    int rank,
+    int nsplit,
     int batchSize)
-    : filePath_(filePath),
+    : stream_(stream),
+    streamSize_(streamSize),
     recordSize_(recordSize),
+    rank_(rank),
+    nsplit_(nsplit),
     batchSize_(batchSize),
     reset_(false),
     eof_(false),
     exit_(false) {
+    CHECK_EQ(streamSize % nsplit, 0);
     ioThread_ = std::thread([this](){this->IOThread(); });
   }
   ~DataReader() {
@@ -59,23 +68,27 @@ public:
 private:
   void IOThread() {
     std::unique_lock<std::mutex> l(mutex_);
+    size_t recordByteSize = sizeof(float)*recordSize_;
+    int recordCount = streamSize_ / (recordByteSize*nsplit_);
+    stream_->Seek(streamSize_ / nsplit_ * rank_);
     while (!exit_) {
-      std::ifstream in(filePath_, std::ios::binary);
-      CHECK(in.good()) << "error opening file " << filePath_ << std::endl;
       eof_ = false;
       reset_ = false;
-      while (in.good()) {
+      while (recordCount > 0) {
         while (!buffer_.empty()) {
           if (reset_ || exit_) break;
           condEmpty_.wait(l);
         }
         if (reset_ || exit_) break;
         buffer_.resize(recordSize_ * batchSize_);
-        size_t bytesToRead = recordSize_ * sizeof(float) * batchSize_;
-        in.read((char*)&buffer_[0], bytesToRead);
-        size_t bytesRead = in.gcount();
-        CHECK_EQ(bytesRead % (sizeof(float)*recordSize_), 0);
+        size_t bytesToRead = recordByteSize * min(batchSize_, recordCount);
+        size_t bytesRead = stream_->Read(buffer_.data(), bytesToRead);
+        if (bytesRead == 0) {
+          break;
+        }
+        CHECK_EQ(bytesRead % recordByteSize, 0);
         buffer_.resize(bytesRead / sizeof(float));
+        recordCount -= bytesRead / recordByteSize;
         condReady_.notify_one();
       }
       eof_ = true;
@@ -92,20 +105,10 @@ private:
   bool eof_;
   bool exit_;
 
+  const size_t streamSize_;
   const int recordSize_;
+  const int rank_;
+  const int nsplit_;
   const int batchSize_;
-  const std::string filePath_;
+  dmlc::SeekStream* stream_;
 };
-
-void TestDataReader() {
-  DataReader r("d.txt", 3, 2);
-  for (int i = 0; i < 3; i++) {
-    while (!r.Eof()) {
-      std::vector<float> v = r.ReadBatch();
-      if (v.empty())
-        break;
-      std::cout << std::hex << *(uint32_t*)(&v[0]) << std::endl;
-    }
-    r.Reset();
-  }
-}

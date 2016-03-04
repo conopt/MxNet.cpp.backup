@@ -11,10 +11,14 @@
 #include <thread>
 #include <numeric>
 #include <chrono>
+#include <windows.h>
 
 #include "MxNetCpp.h"
 #include "util.h"
 #include "data.h"
+#include "dmlc/io.h"
+#include "hdfs_filesys.h"
+
 using namespace std;
 using namespace mxnet::cpp;
 
@@ -23,7 +27,7 @@ public:
   Mlp()
     : ctx_cpu(Context(DeviceType::kCPU, 0)),
     ctx_dev(Context(DeviceType::kCPU, 0)) {}
-  void Run(std::string filePath) {
+  void Run(std::unique_ptr<dmlc::SeekStream> stream, size_t streamSize) {
     /*define the symbolic net*/
     auto sym_x = Symbol::Variable("data");
     auto sym_label = Symbol::Variable("label");
@@ -76,10 +80,9 @@ public:
 
     const int nMiniBatches = 1;
     bool init_kv = false;
-    filePath.insert(filePath.rfind('.'),
-      '-' + to_string(kv.GetNumWorkers()) + '-' + to_string(kv.GetRank()));
     for (int ITER = 0; ITER < maxEpoch; ++ITER) {
-      DataReader dataReader(filePath, sampleSize, batchSize);
+      DataReader dataReader(stream.get(), streamSize,
+          sampleSize, kv.GetRank(), kv.GetNumWorkers(), batchSize);
       NDArray testData, testLabel;
       int mb = 0;
       while (!dataReader.Eof()) {
@@ -200,13 +203,37 @@ private:
 
 };
 
+/**
+ * Since embedded JVM doesn't support wildcard expansion in classpath,
+ * classpath needs to be expanded manually. The shell command to set
+ * expanded classpath may be too long for shell to handle. This function
+ * sets the long classpath in environmental variables.
+ */
+void init_env() {
+  auto* output = _popen("hadoop classpath --glob", "r");
+  char buf[200000];
+  int size = fread(buf, sizeof(char), sizeof(buf), output);
+  buf[size-1] = 0;
+  std::string classpath = "CLASSPATH=";
+  classpath += buf;
+  GetEnvironmentVariableA("CLASSPATH", buf, sizeof(buf));
+  classpath += ';';
+  classpath += buf;
+  _putenv(classpath.c_str());
+}
+
 int main(int argc, char const *argv[]) {
   CHECK_EQ(argc, 2);
+  init_env();
+  using namespace dmlc::io;
+  HDFSFileSystem* hdfs = HDFSFileSystem::GetInstance();
+  URI path(argv[1]);
+  size_t size = hdfs->GetPathInfo(path).size;
+  std::unique_ptr<dmlc::SeekStream> stream(hdfs->OpenForRead(path, false));
   Mlp mlp;
   auto start = std::chrono::steady_clock::now();
-  mlp.Run(argv[1]);
+  mlp.Run(std::move(stream), size);
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>
     (std::chrono::steady_clock::now() - start);
   LG << "Training Duration = " << duration.count() / 1000.0 << "s";
-  return 0;
 }
