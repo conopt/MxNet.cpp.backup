@@ -210,26 +210,42 @@ private:
  * sets the long classpath in environmental variables.
  */
 void init_env() {
-  auto* output = _popen("hadoop classpath --glob", "r");
-  char buf[200000];
+  // Init classpath
+  FILE* output = _popen("hadoop classpath --glob", "r");
+  fseek(output, 0, SEEK_END);
+  char* buf = (char*)malloc((ftell(output) + 1) * sizeof(char));
+  fseek(output, 0, SEEK_SET);
   int size = fread(buf, sizeof(char), sizeof(buf), output);
   buf[size-1] = 0;
-  std::string classpath = "CLASSPATH=";
-  classpath += buf;
+  fclose(output);
+  std::string entry = "CLASSPATH=";
+  entry += buf;
   GetEnvironmentVariableA("CLASSPATH", buf, sizeof(buf));
-  classpath += ';';
-  classpath += buf;
-  _putenv(classpath.c_str());
+  entry += ';';
+  entry += buf;
+  _putenv(entry.c_str());
+
+  // Init scheduler url
+  if (GetEnvironmentVariableA("DMLC_PS_ROOT_URI", buf, sizeof(buf)) == 0) {
+    std::ifstream in("scheduler_machine_list");
+    std::string ip, port;
+    in >> ip >> port;
+    entry = "DMLC_PS_ROOT_URI=" + ip;
+    _putenv(entry.c_str());
+    entry = "DMLC_PS_ROOT_PORT=" + port;
+    _putenv(entry.c_str());
+  }
 }
 
 int main(int argc, char const *argv[]) {
-  CHECK_EQ(argc, 2);
   init_env();
   using namespace dmlc::io;
   HDFSFileSystem* hdfs = HDFSFileSystem::GetInstance();
-  URI path(argv[1]);
-  size_t size = hdfs->GetPathInfo(path).size;
-  std::unique_ptr<dmlc::SeekStream> stream(hdfs->OpenForRead(path, false));
+  char buf[256];
+  GetEnvironmentVariableA("DATA_PATH", buf, sizeof(buf));
+  URI dataPath(buf);
+  size_t size = hdfs->GetPathInfo(dataPath).size;
+  std::unique_ptr<dmlc::SeekStream> stream(hdfs->OpenForRead(dataPath, false));
   Mlp mlp;
   auto start = std::chrono::steady_clock::now();
   mlp.Run(std::move(stream), size);
