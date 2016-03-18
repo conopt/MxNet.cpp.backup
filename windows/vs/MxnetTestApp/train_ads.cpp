@@ -27,7 +27,8 @@ public:
   Mlp()
     : ctx_cpu(Context(DeviceType::kCPU, 0)),
     ctx_dev(Context(DeviceType::kCPU, 0)) {}
-  void Run(std::unique_ptr<dmlc::SeekStream> stream, size_t streamSize) {
+  void Run(KVStore kv, std::unique_ptr<dmlc::SeekStream> stream, size_t streamSize) {
+
     /*define the symbolic net*/
     auto sym_x = Symbol::Variable("data");
     auto sym_label = Symbol::Variable("label");
@@ -66,12 +67,6 @@ public:
     double sTime = get_time();
 
     /*setup basic configs*/
-    KVStore kv("dist_sync");
-    if (kv.GetRole() != "worker") {
-      kv.RunServer();
-      return;
-    }
-
     std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", learning_rate, weight_decay));
     (*opt).SetParam("momentum", 0.9)
       .SetParam("rescale_grad", 1.0 / (kv.GetNumWorkers() * batchSize));
@@ -81,18 +76,20 @@ public:
     const int nMiniBatches = 1;
     bool init_kv = false;
     for (int ITER = 0; ITER < maxEpoch; ++ITER) {
-      DataReader dataReader(stream.get(), streamSize,
-          sampleSize, kv.GetRank(), kv.GetNumWorkers(), batchSize);
       NDArray testData, testLabel;
       int mb = 0;
+      DataReader dataReader(stream.get(), streamSize,
+        sampleSize, kv.GetRank(), kv.GetNumWorkers(), batchSize);
+      size_t totalSamples = 0;
       while (!dataReader.Eof()) {
         //if (mb++ >= nMiniBatches) break;
         // read data in
         auto r = dataReader.ReadBatch();
-        size_t nSamples = r.size() / (sampleSize * kv.GetNumWorkers());
+        size_t nSamples = r.size() / sampleSize;
+        totalSamples += nSamples;
+        vector<float> data_vec, label_vec;
         samplesProcessed += nSamples;
         CHECK(!r.empty());
-        vector<float> data_vec, label_vec;
         for (int i = 0; i < nSamples; i++) {
           float * rp = r.data() + sampleSize * i;
           label_vec.push_back(*rp);
@@ -137,6 +134,7 @@ public:
         NDArray::WaitAll();
         delete exe;
       }
+      LG << "Total samples: " << totalSamples;
 
       //LG << "Iter " << ITER
       //  << ", accuracy: " << ValAccuracy(mlp, testData, testLabel);
@@ -210,20 +208,25 @@ private:
  * sets the long classpath in environmental variables.
  */
 void init_env() {
+  std::string entry = "CLASSPATH=";
+  char* buf = (char*)malloc(32767 * sizeof(char));
   // Init classpath
+  /*
   FILE* output = _popen("hadoop classpath --glob", "r");
   fseek(output, 0, SEEK_END);
   char* buf = (char*)malloc((ftell(output) + 1) * sizeof(char));
   fseek(output, 0, SEEK_SET);
   int size = fread(buf, sizeof(char), sizeof(buf), output);
   buf[size-1] = 0;
+  LG << buf;
   fclose(output);
-  std::string entry = "CLASSPATH=";
   entry += buf;
   GetEnvironmentVariableA("CLASSPATH", buf, sizeof(buf));
   entry += ';';
   entry += buf;
   _putenv(entry.c_str());
+  LG << entry;
+  */
 
   // Init scheduler url
   if (GetEnvironmentVariableA("DMLC_PS_ROOT_URI", buf, sizeof(buf)) == 0) {
@@ -235,10 +238,18 @@ void init_env() {
     entry = "DMLC_PS_ROOT_PORT=" + port;
     _putenv(entry.c_str());
   }
+  LG << "Env inited";
 }
 
 int main(int argc, char const *argv[]) {
   init_env();
+  KVStore kv("dist_sync");
+  if (kv.GetRole() != "worker") {
+    LG << "Running KVStore server";
+    kv.RunServer();
+    return 0;
+  }
+
   using namespace dmlc::io;
   HDFSFileSystem* hdfs = HDFSFileSystem::GetInstance();
   char buf[256];
@@ -246,9 +257,10 @@ int main(int argc, char const *argv[]) {
   URI dataPath(buf);
   size_t size = hdfs->GetPathInfo(dataPath).size;
   std::unique_ptr<dmlc::SeekStream> stream(hdfs->OpenForRead(dataPath, false));
+
   Mlp mlp;
   auto start = std::chrono::steady_clock::now();
-  mlp.Run(std::move(stream), size);
+  mlp.Run(std::move(kv), std::move(stream), size);
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>
     (std::chrono::steady_clock::now() - start);
   LG << "Training Duration = " << duration.count() / 1000.0 << "s";

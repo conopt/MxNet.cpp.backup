@@ -54,6 +54,12 @@ KVStore::KVStore(const std::string& name) {
   CHECK_EQ(MXKVStoreCreate(name.c_str(), &handle_), 0);
 }
 
+KVStore::KVStore(KVStore &&kv) {
+  optimizer_ = std::move(kv.optimizer_);
+  handle_ = kv.handle_;
+  kv.handle_ = nullptr;
+}
+
 void KVStore::RunServer() {
   CHECK_NE(GetRole(), "worker");
   private_::kvstore = this;
