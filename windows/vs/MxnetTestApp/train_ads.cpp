@@ -209,24 +209,20 @@ private:
  */
 void init_env() {
   std::string entry = "CLASSPATH=";
-  char* buf = (char*)malloc(32767 * sizeof(char));
   // Init classpath
-  /*
+  char buf[129];
   FILE* output = _popen("hadoop classpath --glob", "r");
-  fseek(output, 0, SEEK_END);
-  char* buf = (char*)malloc((ftell(output) + 1) * sizeof(char));
-  fseek(output, 0, SEEK_SET);
-  int size = fread(buf, sizeof(char), sizeof(buf), output);
-  buf[size-1] = 0;
-  LG << buf;
+  while (true)
+  {
+    size_t len = fread(buf, sizeof(char), sizeof(buf)-1, output);
+    if (len == 0)
+      break;
+    buf[len] = 0;
+    entry += buf;
+  }
   fclose(output);
-  entry += buf;
-  GetEnvironmentVariableA("CLASSPATH", buf, sizeof(buf));
-  entry += ';';
-  entry += buf;
+  entry.pop_back(); // Remove line ending
   _putenv(entry.c_str());
-  LG << entry;
-  */
 
   // Init scheduler url
   if (GetEnvironmentVariableA("DMLC_PS_ROOT_URI", buf, sizeof(buf)) == 0) {
