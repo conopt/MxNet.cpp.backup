@@ -28,7 +28,6 @@ public:
     reset_(false),
     eof_(false),
     exit_(false) {
-    CHECK_EQ(streamSize % nsplit, 0);
     ioThread_ = std::thread([this](){this->IOThread(); });
   }
   ~DataReader() {
@@ -69,8 +68,18 @@ private:
   void IOThread() {
     std::unique_lock<std::mutex> l(mutex_);
     size_t recordByteSize = sizeof(float)*recordSize_;
-    int recordCount = streamSize_ / (recordByteSize*nsplit_);
-    stream_->Seek(streamSize_ / nsplit_ * rank_);
+    int totalRecords = streamSize_ / recordByteSize;
+    int recordCount = totalRecords / nsplit_;
+    stream_->Seek(recordCount * recordByteSize * rank_);
+    if (rank_ == nsplit_ - 1 && totalRecords % nsplit_ != 0) {
+      recordCount += totalRecords % nsplit_;
+    }
+    LG << "Stream size = " << streamSize_;
+    LG << "record size = " << recordByteSize;
+    LG << "record count = " << recordCount;
+    LG << "Nsplit = " << nsplit_;
+    LG << "rank = " << rank_;
+    LG << "Seeking offset = " << (recordCount * recordByteSize * rank_);
     while (!exit_) {
       eof_ = false;
       reset_ = false;
@@ -82,6 +91,7 @@ private:
         if (reset_ || exit_) break;
         buffer_.resize(recordSize_ * batchSize_);
         size_t bytesToRead = recordByteSize * min(batchSize_, recordCount);
+        LG << "Bytes to read = " << bytesToRead;
         size_t bytesRead = stream_->Read(buffer_.data(), bytesToRead);
         if (bytesRead == 0) {
           break;
