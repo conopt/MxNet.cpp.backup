@@ -17,7 +17,7 @@
 #include "util.h"
 #include "data.h"
 #include "dmlc/io.h"
-#include "hdfs_filesys.h"
+#include "filesys.h"
 
 using namespace std;
 using namespace mxnet::cpp;
@@ -207,22 +207,25 @@ private:
  * expanded classpath may be too long for shell to handle. This function
  * sets the long classpath in environmental variables.
  */
-void init_env() {
-  std::string entry = "CLASSPATH=";
-  // Init classpath
+void init_env(bool use_hdfs) {
+  std::string entry;
   char buf[129];
-  FILE* output = _popen("hadoop classpath --glob", "r");
-  while (true)
-  {
-    size_t len = fread(buf, sizeof(char), sizeof(buf)-1, output);
-    if (len == 0)
-      break;
-    buf[len] = 0;
-    entry += buf;
+  if (use_hdfs) {
+    entry = "CLASSPATH=";
+    // Init classpath
+    FILE* output = _popen("hadoop classpath --glob", "r");
+    while (true)
+    {
+      size_t len = fread(buf, sizeof(char), sizeof(buf) - 1, output);
+      if (len == 0)
+        break;
+      buf[len] = 0;
+      entry += buf;
+    }
+    fclose(output);
+    entry.pop_back(); // Remove line ending
+    _putenv(entry.c_str());
   }
-  fclose(output);
-  entry.pop_back(); // Remove line ending
-  _putenv(entry.c_str());
 
   // Init scheduler url
   if (GetEnvironmentVariableA("DMLC_PS_ROOT_URI", buf, sizeof(buf)) == 0) {
@@ -238,7 +241,10 @@ void init_env() {
 }
 
 int main(int argc, char const *argv[]) {
-  init_env();
+  using namespace dmlc::io;
+  URI dataPath(argv[1]);
+  init_env(dataPath.protocol == "hdfs://");
+
   KVStore kv("dist_sync");
   if (kv.GetRole() != "worker") {
     LG << "Running KVStore server";
@@ -246,13 +252,9 @@ int main(int argc, char const *argv[]) {
     return 0;
   }
 
-  using namespace dmlc::io;
-  HDFSFileSystem* hdfs = HDFSFileSystem::GetInstance();
-  char buf[256];
-  GetEnvironmentVariableA("DATA_PATH", buf, sizeof(buf));
-  URI dataPath(buf);
-  size_t size = hdfs->GetPathInfo(dataPath).size;
-  std::unique_ptr<dmlc::SeekStream> stream(hdfs->OpenForRead(dataPath, false));
+  FileSystem* fs = FileSystem::GetInstance(dataPath);
+  size_t size = fs->GetPathInfo(dataPath).size;
+  std::unique_ptr<dmlc::SeekStream> stream(fs->OpenForRead(dataPath, false));
 
   Mlp mlp;
   auto start = std::chrono::steady_clock::now();
