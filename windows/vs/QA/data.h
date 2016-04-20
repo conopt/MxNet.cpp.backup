@@ -67,6 +67,12 @@ private:
     std::string line;
     // vector of (Query, Answer, Rating)
     std::vector<std::tuple<std::string, std::string, float>> data;
+    auto addLine = [this, &data](const std::string &line) {
+      data.push_back(std::move(parse(line)));
+      if (data.size() == batchSize_) {
+        addToBuffer(std::move(data));
+      }
+    };
     // Read until eof / reset / exit
     while (true) {
       if (reset_ || exit_) break;
@@ -77,7 +83,7 @@ private:
       }
       buffer_.get()[bytesRead] = 0;
       const char *line_start = buffer_.get();
-      // Handle the bytes read
+      // Extract lines from bytes read, leave the remaining part to next read
       while (*line_start) {
         const char *line_end = strchr(line_start, '\n');
         if (line_end == nullptr) {
@@ -90,28 +96,32 @@ private:
         else {
           line.insert(line.end(), line_start, line_end);
         }
+        line_start = line_end + 1;
         if (!first) {
-          data.push_back(std::move(parse(line)));
-          if (data.size() == batchSize_) {
-            addToBuffer(std::move(data));
-          }
+          addLine(line);
         }
         else {
           // Ignore tsv header
           first = false;
         }
         line.clear();
-        line_start = line_end + 1;
       }
+    }
+    // Extra data
+    if (!line.empty()) {
+      addLine(line);
+    }
+    if (!data.empty()) {
+      addToBuffer(std::move(data));
     }
     eof_ = true;
   }
 
-  void addToBuffer(std::vector<std::tuple<std::string, std::string, float>> data) {
+  void addToBuffer(std::vector<std::tuple<std::string, std::string, float>>&& data) {
     // Push the batch data and notify consumer.
     {
       std::unique_lock<std::mutex> l(mutex_);
-      dataBuffer_.push_back(std::move(data));
+      dataBuffer_.push_back(data);
     }
     condReady_.notify_one();
   }
@@ -131,10 +141,13 @@ private:
 
 void testDataReader(const std::string &path) {
   DataReader reader(dmlc::SeekStream::CreateForRead(path.c_str()), 300);
+  size_t total = 0;
   while (true) {
     auto data = std::move(reader.ReadBatch());
+    total += data.size();
     if (data.size() == 0) {
       break;
     }
   }
+  LOG(INFO) << "Total Data Read: " << total;
 }
