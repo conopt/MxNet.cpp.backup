@@ -12,6 +12,8 @@
 #include "logging.h"
 #include "dmlc/io.h"
 
+typedef std::tuple<std::string, std::string, float> QAItem;
+
 class DataReader {
 public:
   DataReader(dmlc::SeekStream* stream, int batchSize)
@@ -34,7 +36,7 @@ public:
     eof_ = false;
   }
 
-  std::vector<std::tuple<std::string, std::string, float>> ReadBatch() {
+  std::vector<QAItem> ReadBatch() {
     std::unique_lock<std::mutex> l(mutex_);
     if (eof_) return {};
     if (dataBuffer_.size() == 0) {
@@ -46,7 +48,7 @@ public:
   }
 
 private:
-  std::tuple<std::string, std::string, float> parse(std::string line) {
+  QAItem parse(std::string line) {
     // Query URL PassageID Passage Rating1 Rating2
     std::transform(line.begin(), line.end(), line.begin(), ::tolower);
     std::istringstream iss(line);
@@ -117,7 +119,7 @@ private:
     eof_ = true;
   }
 
-  void addToBuffer(std::vector<std::tuple<std::string, std::string, float>>&& data) {
+  void addToBuffer(std::vector<QAItem>&& data) {
     // Push the batch data and notify consumer.
     {
       std::unique_lock<std::mutex> l(mutex_);
@@ -133,7 +135,7 @@ private:
   bool eof_;
   bool exit_;
 
-  std::list<std::vector<std::tuple<std::string, std::string, float>>> dataBuffer_;
+  std::list<std::vector<QAItem>> dataBuffer_;
   dmlc::SeekStream* stream_;
   const int batchSize_;
   const static int BUFFER_CAPACITY = 1<<16;

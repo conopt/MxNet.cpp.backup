@@ -23,5 +23,11 @@
     <ClInclude Include="data.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="embedding.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="utils.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -38,11 +38,22 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)..\..\..\dmlc-core\src\io;$(SolutionDir)..\..\..\dmlc-core\include;$(SolutionDir)\..\..\..\include;$(SolutionDir)..\..\3rdparty\openblas\include;$(SolutionDir)..\..\3rdparty\hdfs\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(SolutionDir)..\..\3rdparty\hdfs\jvm.lib;$(SolutionDir)..\..\3rdparty\hdfs\hdfs.lib;C:\Workspace\mxnet\vs13\Release\libmxnet.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="train_qa.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="data.h" />
+    <ClInclude Include="embedding.hpp" />
+    <ClInclude Include="utils.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\dmlc-core\dmlccore.vcxproj">

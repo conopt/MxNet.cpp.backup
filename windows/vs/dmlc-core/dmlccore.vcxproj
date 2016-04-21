@@ -117,7 +117,7 @@
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <Optimization>MaxSpeed</Optimization>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>WIN32;_WINDOWS;NDEBUG;DMLC_USE_HDFS=1;DMLC_USE_S3=0;DMLC_USE_AZURE=0;DMLC_USE_CXX11;CMAKE_INTDIR="Release";%(PreprocessorDefinitions)</PreprocessorDefinitions>
