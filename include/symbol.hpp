@@ -22,7 +22,7 @@ OpMap *Symbol::op_map_ = new OpMap();
 Symbol::Symbol(SymbolHandle handle) {
   blob_ptr_ = std::make_shared<SymBlob>(handle);
 }
-Symbol::Symbol(const std::string &name) {
+Symbol::Symbol(const std::string &name): name_(name) {
   SymbolHandle handle;
   CHECK_EQ(MXSymbolCreateVariable(name.c_str(), &(handle)), 0);
   blob_ptr_ = std::make_shared<SymBlob>(handle);
@@ -300,6 +300,10 @@ Executor *Symbol::Bind(const Context &context,
                        const std::vector<NDArray> &aux_arrays) {
   return new Executor(*this, context, arg_arrays, grad_arrays, grad_reqs,
                       aux_arrays);
+}
+
+std::string Symbol::name() const {
+  return name_;
 }
 }  // namespace cpp
 }  // namespace mxnet

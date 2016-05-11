@@ -323,19 +323,20 @@ inline Symbol Convolution(const std::string& symbol_name,
                           int num_group = 1,
                           int64_t workspace = 512,
                           bool no_bias = false) {
-  return Operator("Convolution")
-           .SetParam("kernel", kernel)
-           .SetParam("num_filter", num_filter)
-           .SetParam("stride", stride)
-           .SetParam("dilate", dilate)
-           .SetParam("pad", pad)
-           .SetParam("num_group", num_group)
-           .SetParam("workspace", workspace)
-           .SetParam("no_bias", no_bias)
-           .SetInput("data", data)
-           .SetInput("weight", weight)
-           .SetInput("bias", bias)
-           .CreateSymbol(symbol_name);
+  auto op = Operator("Convolution")
+              .SetParam("kernel", kernel)
+              .SetParam("num_filter", num_filter)
+              .SetParam("stride", stride)
+              .SetParam("dilate", dilate)
+              .SetParam("pad", pad)
+              .SetParam("num_group", num_group)
+              .SetParam("workspace", workspace)
+              .SetParam("no_bias", no_bias)
+              .SetInput("data", data)
+              .SetInput("weight", weight);
+  if (!no_bias)
+    op.SetInput("bias", bias);
+  return op.CreateSymbol(symbol_name);
 }
 
 /*!
@@ -460,24 +461,42 @@ inline Symbol Embedding(const std::string& symbol_name,
  * \param symbol_name name of the resulting symbol.
  * \param data Input data to the FullyConnectedOp. 
  * \param weight Weight matrix. 
- * \param bias Bias parameter. 
  * \param num_hidden Number of hidden nodes of the output. 
- * \param no_bias Whether to disable bias parameter. 
+ * \param bias Bias parameter. 
  * \return new symbol
  */
 inline Symbol FullyConnected(const std::string& symbol_name,
                              Symbol data,
                              Symbol weight,
-                             Symbol bias,
                              int num_hidden,
-                             bool no_bias = false) {
+                             Symbol bias) {
   return Operator("FullyConnected")
-           .SetParam("num_hidden", num_hidden)
-           .SetParam("no_bias", no_bias)
-           .SetInput("data", data)
-           .SetInput("weight", weight)
-           .SetInput("bias", bias)
-           .CreateSymbol(symbol_name);
+    .SetParam("num_hidden", num_hidden)
+    .SetParam("no_bias", false)
+    .SetInput("data", data)
+    .SetInput("weight", weight)
+    .SetInput("bias", bias)
+    .CreateSymbol(symbol_name);
+}
+
+/*!
+ * \breif Apply matrix multiplication to input. 
+ * \param symbol_name name of the resulting symbol.
+ * \param data Input data to the FullyConnectedOp. 
+ * \param weight Weight matrix. 
+ * \param num_hidden Number of hidden nodes of the output. 
+ * \return new symbol
+ */
+inline Symbol FullyConnected(const std::string& symbol_name,
+                             Symbol data,
+                             Symbol weight,
+                             int num_hidden) {
+  return Operator("FullyConnected")
+    .SetParam("num_hidden", num_hidden)
+    .SetParam("no_bias", true)
+    .SetInput("data", data)
+    .SetInput("weight", weight)
+    .CreateSymbol(symbol_name);
 }
 
 /*!
@@ -895,6 +914,12 @@ inline Symbol UpSampling(const std::string& symbol_name,
                UpSamplingMultiInputModeValues[static_cast<int>(multi_input_mode)])
            (data)
            .CreateSymbol(symbol_name);
+}
+
+inline Symbol Transpose(const std::string& symbol_name, Symbol src) {
+  return Operator("Transpose")
+    .SetInput("src", src)
+    .CreateSymbol(symbol_name);
 }
 
 }  // namespace cpp

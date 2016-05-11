@@ -23,10 +23,13 @@
     <ClInclude Include="data.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="embedding.hpp">
+    <ClInclude Include="utils.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="utils.hpp">
+    <ClInclude Include="embeddings.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="deepqa.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>

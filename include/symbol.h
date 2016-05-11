@@ -229,9 +229,12 @@ class Symbol {
                  const std::vector<OpReqType> &grad_reqs,
                  const std::vector<NDArray> &aux_arrays);
 
+  std::string name() const;
+
  private:
   std::shared_ptr<SymBlob> blob_ptr_;
   static OpMap *op_map_;
+  std::string name_;
 };
 }  // namespace cpp
 }  // namespace mxnet

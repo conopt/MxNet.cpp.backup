@@ -52,7 +52,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="data.h" />
-    <ClInclude Include="embedding.hpp" />
+    <ClInclude Include="deepqa.hpp" />
+    <ClInclude Include="embeddings.hpp" />
     <ClInclude Include="utils.hpp" />
   </ItemGroup>
   <ItemGroup>
