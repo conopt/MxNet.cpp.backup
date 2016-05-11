@@ -34,7 +34,7 @@
       <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(SolutionDir)..\..\3rdparty\hdfs\jvm.lib;$(SolutionDir)..\..\3rdparty\hdfs\hdfs.lib;C:\Workspace\mxnet\vs13\Debug\libmxnet.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(SolutionDir)..\..\3rdparty\hdfs\jvm.lib;$(SolutionDir)..\..\3rdparty\hdfs\hdfs.lib;$(SolutionDir)..\..\..\..\mxnet\vs13\Debug\libmxnet.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
