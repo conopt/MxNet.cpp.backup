@@ -17,7 +17,8 @@
 typedef std::tuple<std::vector<std::string>, std::vector<std::string>,
   std::vector<int>, std::vector<int>, float> QAItem;
 
-class DataReader {
+class DataReader
+{
 public:
   static DataReader* Create(const std::string &filename, size_t batchSize);
 
@@ -26,26 +27,33 @@ public:
       batchSize_(batchSize),
       reset_(false),
       eof_(false),
-      exit_(false) {
-  }
+      exit_(false)
+  { }
 
-  ~DataReader() {
+  ~DataReader()
+  {
+    exit_ = true;
     ioThread_.join();
   }
 
-  bool Eof() {
+  bool Eof()
+  {
     std::lock_guard<std::mutex> l(mutex_);
     return eof_;
   }
 
-  void Reset() {
+  void Reset()
+  {
+    std::unique_lock<std::mutex> l(mutex_);
     reset_ = true;
     eof_ = false;
   }
 
-  std::vector<QAItem> ReadBatch() {
+  std::vector<QAItem> ReadBatch()
+  {
     std::unique_lock<std::mutex> l(mutex_);
-    if (dataBuffer_.size() == 0) {
+    if (dataBuffer_.size() == 0)
+    {
       if (eof_) return {};
       condReady_.wait(l, [this]{ return dataBuffer_.size() > 0; });
     } 
@@ -55,6 +63,7 @@ public:
   }
 
 protected:
+  virtual void clean_() = 0;
 
   QAItem add_overlap(std::vector<std::string> question, std::vector<std::string> answer, float rating)
   {
@@ -70,9 +79,33 @@ protected:
       std::move(q_overlap), std::move(a_overlap), rating);
   }
 
-  virtual void IOThread() = 0;
+  virtual void HandleBytes(const char*, size_t) = 0;
 
-  void addToBuffer(std::vector<QAItem>&& data) {
+  void IOThread()
+  {
+    std::unique_ptr<char> buffer_(new char[BUFFER_CAPACITY+1]);
+    eof_ = false;
+    reset_ = false;
+    while (!exit_)
+    {
+      if (eof_) continue; // Idle
+      if (reset_)
+      {
+        stream_->Seek(0);
+        dataBuffer_.clear();
+        clean_();
+        reset_ = false;
+      }
+      size_t len = stream_->Read(buffer_.get(), BUFFER_CAPACITY);
+      buffer_.get()[len] = 0;
+      HandleBytes(buffer_.get(), len);
+      if (len == 0)
+        eof_ = true;
+    }
+  }
+
+  void addToBuffer(std::vector<QAItem>&& data)
+  {
     // Push the batch data and notify consumer.
     {
       std::unique_lock<std::mutex> l(mutex_);
@@ -82,182 +115,162 @@ protected:
   }
 
   std::thread ioThread_;
+  std::list<std::vector<QAItem>> dataBuffer_;
+  const size_t batchSize_;
+
+private:
+  std::unique_ptr<dmlc::SeekStream> stream_;
+  const static int BUFFER_CAPACITY = 1<<16;
   std::mutex mutex_;
   std::condition_variable condReady_;
   bool reset_;
   bool eof_;
   bool exit_;
-
-  std::list<std::vector<QAItem>> dataBuffer_;
-  std::unique_ptr<dmlc::SeekStream> stream_;
-  const size_t batchSize_;
-  const static int BUFFER_CAPACITY = 1<<16;
 };
 
-class TSVDataReader : public DataReader {
+class LineDataReader : public DataReader
+{
+  public:
+    LineDataReader(const std::string &filename, size_t batchSize) :
+      DataReader(filename, batchSize)
+    {
+    }
+
+  protected:
+    virtual void addLine(const std::string& line) = 0;
+    std::string line_;
+
+    // vector of (Query, Answer, Rating)
+    std::vector<QAItem> data_;
+
+    void clean_() override
+    {
+      line_ = "";
+      data_.clear();
+    }
+
+    void HandleBytes(const char* bytes, size_t len) override
+    {
+      if (len == 0)
+      {
+        // Extra data
+        if (!line_.empty())
+          addLine(line_);
+        addLine(""); // to signal eof
+        if (!data_.empty())
+          addToBuffer(std::move(data_));
+      }
+      const char *line_start = bytes;
+      // Extract lines from bytes read, leave the remaining part to next read
+      while (*line_start)
+      {
+        const char *line_end = strchr(line_start, '\n');
+        if (line_end == nullptr)
+        {
+          line_ += line_start;
+          break;
+        }
+        if (line_end[-1] == '\r')
+          line_.insert(line_.end(), line_start, line_end - 1);
+        else
+          line_.insert(line_.end(), line_start, line_end);
+        line_start = line_end + 1;
+        if (!line_.empty())
+          addLine(line_);
+        line_.clear();
+      }
+    }
+};
+
+class TSVDataReader : public LineDataReader
+{
   public:
     TSVDataReader(const std::string &filename, size_t batchSize) :
-      DataReader(filename, batchSize) {
-      ioThread_ = std::thread([this](){
+      LineDataReader(filename, batchSize)
+    {
+      ioThread_ = std::thread([this]()
+      {
         this->IOThread();
       });
     }
   private:
-    QAItem parse(std::string line) {
+    QAItem parse(std::string line)
+    {
       // Query URL PassageID Passage Rating1 Rating2
       std::transform(line.begin(), line.end(), line.begin(), ::tolower);
       std::istringstream iss(line);
       std::vector<std::string> columns;
-      for (std::string segment; std::getline(iss, segment, '\t');) {
+      for (std::string segment; std::getline(iss, segment, '\t');)
+      {
         columns.push_back(std::move(segment));
       }
       CHECK_EQ(columns.size(), 6);
       float rating = columns[5] == "bad" ? 0 : 1;
       return add_overlap(split_words(columns[0]), split_words(columns[3]), rating);
     }
-
-  protected:
-    void IOThread() override {
-      std::unique_ptr<char> buffer_(new char[BUFFER_CAPACITY+1]);
-      eof_ = false;
-      reset_ = false;
-      bool first = true;
-      std::string line;
-      // vector of (Query, Answer, Rating)
-      std::vector<QAItem> data;
-      auto addLine = [this, &data](const std::string &line) {
-        data.push_back(std::move(parse(line)));
-        if (data.size() == batchSize_) {
-          addToBuffer(std::move(data));
-          data.clear();
-        }
-      };
-      // Read until eof / reset / exit
-      while (true) {
-        if (reset_ || exit_) break;
-        size_t bytesRead = stream_->Read(buffer_.get(), BUFFER_CAPACITY);
-        if (bytesRead == 0) {
-          // eof
-          break;
-        }
-        buffer_.get()[bytesRead] = 0;
-        const char *line_start = buffer_.get();
-        // Extract lines from bytes read, leave the remaining part to next read
-        while (*line_start) {
-          const char *line_end = strchr(line_start, '\n');
-          if (line_end == nullptr) {
-            line += line_start;
-            break;
-          }
-          if (line_end[-1] == '\r') {
-            line.insert(line.end(), line_start, line_end - 1);
-          }
-          else {
-            line.insert(line.end(), line_start, line_end);
-          }
-          line_start = line_end + 1;
-          if (!first) {
-            addLine(line);
-          }
-          else {
-            // Ignore tsv header
-            first = false;
-          }
-          line.clear();
-        }
+  private:
+    bool first_ = true;
+    void addLine(const std::string &line)
+    {
+      if (first_)
+      {
+        first_ = false;
+        return;
       }
-      // Extra data
-      if (!line.empty()) {
-        addLine(line);
+      if (line.empty()) // eof
+      {
+        first_ = true;
+        return;
       }
-      if (!data.empty()) {
-        addToBuffer(std::move(data));
+      data_.push_back(std::move(parse(line)));
+      if (data_.size() == batchSize_)
+      {
+        addToBuffer(std::move(data_));
+        data_.clear();
       }
-      eof_ = true;
-    }
+    };
 };
 
-class XMLDataReader : public DataReader {
+class XMLDataReader : public LineDataReader
+{
   public:
     XMLDataReader(const std::string &filename, size_t batchSize):
-      DataReader(filename, batchSize) {
-      ioThread_ = std::thread([this](){
+      LineDataReader(filename, batchSize)
+    {
+      ioThread_ = std::thread([this]()
+      {
         this->IOThread();
       });
     }
+  private:
+    std::string prev_;
+    std::vector<std::string> current_question_;
   protected:
-    void IOThread() override {
-      std::regex qid_regex("<QApairs id='(.*)'>");
-      std::unique_ptr<char> buffer_(new char[BUFFER_CAPACITY+1]);
-      eof_ = false;
-      reset_ = false;
-      bool first = true;
-      std::string line;
-      // vector of (Query, Answer, Rating)
-      std::vector<QAItem> data;
-      std::string prev;
-      std::vector<std::string> current_question;
-      auto addLine = [this, &data, &prev, &current_question](const std::string &line) {
-        if (prev == "<question>") {
-          current_question = split(line, '\t');
-        }
-        int rating = -1;
-        if (prev == "<positive>")
-          rating = 1;
-        if (prev == "<negative>")
-          rating = 0;
-        if (rating >= 0) {
-          data.push_back(std::move(add_overlap(current_question, std::move(split(line, '\t')), rating)));
-          if (data.size() == batchSize_) {
-            addToBuffer(std::move(data));
-            data.clear();
-          }
-        }
-        prev = line;
-      };
-      // Read until eof / reset / exit
-      while (true) {
-        if (reset_ || exit_) break;
-        size_t bytesRead = stream_->Read(buffer_.get(), BUFFER_CAPACITY);
-        if (bytesRead == 0) {
-          // eof
-          break;
-        }
-        buffer_.get()[bytesRead] = 0;
-        const char *line_start = buffer_.get();
-        // Extract lines from bytes read, leave the remaining part to next read
-        while (*line_start) {
-          const char *line_end = strchr(line_start, '\n');
-          if (line_end == nullptr) {
-            line += line_start;
-            break;
-          }
-          if (line_end[-1] == '\r') {
-            line.insert(line.end(), line_start, line_end - 1);
-          }
-          else {
-            line.insert(line.end(), line_start, line_end);
-          }
-          line_start = line_end + 1;
-          if (!first) {
-            addLine(line);
-          }
-          else {
-            // Ignore tsv header
-            first = false;
-          }
-          line.clear();
+    void addLine(const std::string &line) override
+    {
+      if (line.empty())
+      {
+        prev_ = "";
+        return;
+      }
+      if (prev_ == "<question>")
+        current_question_ = split(line, '\t');
+      int rating = -1;
+      if (prev_ == "<positive>")
+        rating = 1;
+      if (prev_ == "<negative>")
+        rating = 0;
+      if (rating >= 0)
+      {
+        data_.push_back(std::move(add_overlap(current_question_, std::move(split(line, '\t')), rating)));
+        if (data_.size() == batchSize_)
+        {
+          addToBuffer(std::move(data_));
+          data_.clear();
         }
       }
-      // Extra data
-      if (!line.empty()) {
-        addLine(line);
-      }
-      if (!data.empty()) {
-        addToBuffer(std::move(data));
-      }
-      eof_ = true;
-    }
+      prev_ = line;
+    };
 };
 
 

@@ -2,6 +2,7 @@
 #include <unordered_map>
 #include <vector>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <chrono>
@@ -16,7 +17,7 @@ class Embeddings
       size_t rows, cols;
       fin >> rows >> cols;
       cols_ = cols;
-      LOG(INFO) << "Total rows: " << rows;
+      std::cerr << "Total rows: " << rows << std::endl;
       zero_ = std::vector<float>(cols, 0.0f);
 
       const size_t ROW_SIZE = cols * sizeof(float);
@@ -36,8 +37,9 @@ class Embeddings
           std::forward_as_tuple(vec, vec + cols));
       }
       auto end = std::chrono::steady_clock::now();
-      LG << "Read embeedings in " <<
+      std::cerr << "Read embeedings in " <<
         std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / 1000.0 << 's';
+      std::cerr << std::endl;
     }
 
     size_t length() const
