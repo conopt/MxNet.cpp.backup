@@ -42,7 +42,7 @@ class EnumType:
 
 class Arg:
     typeDict = {'boolean':'bool',\
-        'Shape(tuple)':'mxnet::TShape',\
+        'Shape(tuple)':'Shape',\
         'Symbol':'Symbol',\
         'Symbol[]':'const std::vector<Symbol>&',\
         'float':'mx_float',\
@@ -78,7 +78,7 @@ class Arg:
             elif self.defaultString == 'True':
                 self.defaultString = 'true'
             elif self.defaultString[0] == '(':
-                self.defaultString = 'mshadow::Shape2' + self.defaultString
+                self.defaultString = 'Shape' + self.defaultString
 
     def ConstructEnumTypeName(self, opName = '', argName = ''):
         a = opName[0].upper()
@@ -190,16 +190,18 @@ class Op:
                 v = arg.enum.GetConvertEnumVariableToString(v)
             ret = ret + indentStr + ' ' * 11 + \
                 '.SetParam(\"%s\", %s)\n' % (arg.name, v)
-        ret = ret[:-1]  # get rid of the last \n
+        #ret = ret[:-1]  # get rid of the last \n
         symbols = ''
         inputAlreadySet = False
         for arg in self.args:   # set inputs
             if arg.type != 'Symbol':
                 continue
             inputAlreadySet = True
-            if symbols != '':
-                symbols = symbols + ', '
-            symbols = symbols + arg.name
+            #if symbols != '':
+            #    symbols = symbols + ', '
+            #symbols = symbols + arg.name
+            ret = ret + indentStr + ' ' * 11 + \
+                '.SetInput(\"%s\", %s)\n' % (arg.name, arg.name)
         for arg in self.args:   # set input arrays vector<Symbol>
             if arg.type != 'const std::vector<Symbol>&':
                 continue
@@ -207,7 +209,7 @@ class Op:
                 logging.error("op %s has both Symbol[] and Symbol inputs!" % self.name)
             inputAlreadySet = True
             symbols = arg.name
-        ret = ret + '(%s)\n' % symbols
+            ret = ret + '(%s)\n' % symbols
         ret = ret + indentStr + ' ' * 11 + \
             '.CreateSymbol(symbol_name);\n'
         ret = ret + indentStr + '}\n'
@@ -291,12 +293,20 @@ if __name__ == "__main__":
     #print(decl)
 
     # generate file header
-    patternStr = ("#ifndef _MXNETOP_H\n"
+    patternStr = ("/*!\n"
+                 "*  Copyright (c) 2016 by Contributors\n"
+                 "* \\file op.h\n"
+                 "* \\brief definition of all the operators\n"
+                 "* \\author Chuntao Hong\n"
+                 "*/\n"
+                 "\n"      
+                 "#ifndef _MXNETOP_H\n"
                  "#define _MXNETOP_H\n"
                  "\n"
                  "#include <string>\n"
                  "#include <vector>\n"
-                 "#include \"mxnet/base.h\"\n"
+                 "#include \"base.h\"\n"
+                 "#include \"shape.h\"\n"
                  "#include \"MxNetCpp.h\"\n"
                  "\n"
                  "namespace mxnet {\n"
@@ -306,6 +316,6 @@ if __name__ == "__main__":
                  "} //namespace cpp\n"
                  "} //namespace mxnet\n"
                  "#endif //ifndef _MXNETOP_H\n")
-    with open('../../include/MxNetOp.h', 'w') as f:
+    with open('../../include/op.h', 'w') as f:
         f.write(patternStr % ParseAllOps())
     pass

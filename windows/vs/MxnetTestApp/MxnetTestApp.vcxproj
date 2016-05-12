@@ -19,15 +19,35 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\example\mlp.cpp" />
-    <ClCompile Include="..\..\..\src\executor.cpp" />
-    <ClCompile Include="..\..\..\src\MxNetCpp.cpp" />
-    <ClCompile Include="..\..\..\src\ndarray.cpp" />
-    <ClCompile Include="..\..\..\src\symbol.cpp" />
+    <ClInclude Include="..\..\..\include\base.h" />
+    <ClInclude Include="..\..\..\include\c_api.h" />
+    <ClInclude Include="..\..\..\include\executor.h" />
+    <ClInclude Include="..\..\..\include\executor.hpp" />
+    <ClInclude Include="..\..\..\include\kvstore.hpp" />
+    <ClInclude Include="..\..\..\include\kvstore.h" />
+    <ClInclude Include="..\..\..\include\logging.h" />
+    <ClInclude Include="..\..\..\include\MxNetCpp.h" />
+    <ClInclude Include="..\..\..\include\ndarray.h" />
+    <ClInclude Include="..\..\..\include\ndarray.hpp" />
+    <ClInclude Include="..\..\..\include\op.h" />
+    <ClInclude Include="..\..\..\include\operator.h" />
+    <ClInclude Include="..\..\..\include\operator.hpp" />
+    <ClInclude Include="..\..\..\include\optimizer.h" />
+    <ClInclude Include="..\..\..\include\optimizer.hpp" />
+    <ClInclude Include="..\..\..\include\op_map.h" />
+    <ClInclude Include="..\..\..\include\shape.h" />
+    <ClInclude Include="..\..\..\include\symbol.h" />
+    <ClInclude Include="..\..\..\include\symbol.hpp" />
+    <ClInclude Include="data.h" />
+    <ClInclude Include="util.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\include\MxNetCpp.h" />
-    <ClInclude Include="..\..\..\include\MxNetOp.h" />
+    <ClCompile Include="train_ads.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\dmlc-core\dmlccore.vcxproj">
+      <Project>{07267aeb-4bee-3173-b6b6-3bf81a321b90}</Project>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B1C99034-DA2A-43F6-B8C3-C7DC4EED5EB7}</ProjectGuid>
@@ -110,15 +130,15 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>_SCL_SECURE_NO_WARNINGS;MSHADOW_IN_CXX11;DMLC_USE_CXX11;MSHADOW_USE_CBLAS;WIN32;MSHADOW_USE_CUDA=0;_DEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..\..\..\include;$(SolutionDir)\..\..\3rdparty\openblas\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <SDLCheck>false</SDLCheck>
+      <AdditionalIncludeDirectories>$(SolutionDir)..\..\..\dmlc-core\src\io;$(SolutionDir)..\..\..\dmlc-core\include;$(SolutionDir)\..\..\..\include;$(SolutionDir)..\..\3rdparty\openblas\include;$(SolutionDir)..\..\3rdparty\hdfs\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(SolutionDir)\..\..\..\lib\windows;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>libmxnet.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(SolutionDir)..\..\3rdparty\hdfs\jvm.lib;$(SolutionDir)..\..\3rdparty\hdfs\hdfs.lib;libmxnet.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -149,8 +169,8 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>_SCL_SECURE_NO_WARNINGS;MSHADOW_IN_CXX11;DMLC_USE_CXX11;MSHADOW_USE_CBLAS;WIN32;MSHADOW_USE_CUDA=0;NDEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>$(SolutionDir)\..\..\..\include;$(SolutionDir)\..\..\3rdparty\openblas\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalIncludeDirectories>$(SolutionDir)..\..\..\dmlc-core\src\io;$(SolutionDir)..\..\..\dmlc-core\include;$(SolutionDir)\..\..\..\include;$(SolutionDir)..\..\3rdparty\openblas\include;$(SolutionDir)..\..\3rdparty\hdfs\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -158,7 +178,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalLibraryDirectories>$(SolutionDir)\..\..\..\lib\windows;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>libmxnet.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(SolutionDir)..\..\3rdparty\hdfs\jvm.lib;$(SolutionDir)..\..\3rdparty\hdfs\hdfs.lib;libmxnet.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
