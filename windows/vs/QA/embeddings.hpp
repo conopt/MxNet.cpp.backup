@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <random>
 #include "MxNetCpp.h"
 
 class Embeddings
@@ -19,6 +20,14 @@ class Embeddings
       cols_ = cols;
       std::cerr << "Total rows: " << rows << std::endl;
       zero_ = std::vector<float>(cols, 0.0f);
+      /*
+      std::random_device rd;
+      std::mt19937 gen(rd());
+      std::uniform_real_distribution<float> dis(-0.25f, 0.25f);
+      for (size_t i = 0; i < cols; ++i)
+        zero_[i] = dis(gen);
+        */
+
 
       const size_t ROW_SIZE = cols * sizeof(float);
       std::unique_ptr<char> row_buffer(new char[ROW_SIZE]);

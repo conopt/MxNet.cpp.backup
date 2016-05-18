@@ -254,7 +254,11 @@ class XMLDataReader : public LineDataReader
         return;
       }
       if (prev_ == "<question>")
-        current_question_ = split(line, '\t');
+      {
+        std::string lower_line = line;
+        std::transform(line.begin(), line.end(), lower_line.begin(), ::tolower);
+        current_question_ = split(lower_line, '\t');
+      }
       int rating = -1;
       if (prev_ == "<positive>")
         rating = 1;
@@ -262,7 +266,10 @@ class XMLDataReader : public LineDataReader
         rating = 0;
       if (rating >= 0)
       {
-        data_.push_back(std::move(add_overlap(current_question_, std::move(split(line, '\t')), rating)));
+        std::string lower_line = line;
+        std::transform(line.begin(), line.end(), lower_line.begin(), ::tolower);
+        data_.push_back(std::move(
+          add_overlap(current_question_, std::move(split(lower_line, '\t')), rating)));
         if (data_.size() == batchSize_)
         {
           addToBuffer(std::move(data_));

@@ -2,11 +2,142 @@
 using namespace std;
 using namespace mxnet::cpp;
 
-// argv[1]: data path, argv[2]: embedding path, argv[3]: optional validation path
-int main(int argc, char *argv[])
+void data_split(string data_dir, string name, size_t output_count)
+{
+  string output_dir = data_dir;
+  unique_ptr<DataReader> reader(DataReader::Create(data_dir + name, 500));
+  size_t total = 0;
+  while (true)
+  {
+    auto data = reader->ReadBatch();
+    total += data.size();
+    cerr << data.size() << endl;
+    if (data.size() == 0)
+      break;
+  }
+  reader->Reset();
+  cerr << "total pairs = " << total << endl;
+  size_t piece = total / output_count;
+
+  const string header = "Q\tA\tU\tR1\tR2\n";
+  ofstream output;
+  size_t need = 0;
+  int current = -1;
+  while (true)
+  {
+    auto data = reader->ReadBatch();
+    if (data.size() == 0)
+      break;
+    auto it = data.begin();
+    size_t remain = data.size();
+    while (it != data.end())
+    {
+      if (need == 0)
+      {
+        ++current;
+        need = piece;
+        if (current == output_count - 1)
+          need = total - piece * current;
+        output = ofstream(output_dir + name + "." + to_string(current) + "-" + to_string(output_count) + ".tsv");
+        output << header;
+      }
+      size_t n = min(need, remain);
+      need -= n;
+      remain -= n;
+      while (n > 0)
+      {
+        const auto &q = get<0>(*it);
+        for (auto& w : q)
+          output << w << ' ';
+        output << '\t';
+        const auto &a = get<1>(*it);
+        for (auto& w : a)
+          output << w << ' ';
+        output << "url\tr1\t" << (get<4>(*it) > 0.5 ? "perfect" : "bad");
+        ++it;
+        --n;
+      }
+    }
+  }
+}
+
+void testconv()
+{
+  vector<float> data_v{ 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5,
+  10,10,10,10,20,20,20,20,30,30,30,30,40,40,40,40,50,50,50,50};
+  vector<float> filter_v{ 1, 2, 3, 4, 1, 1, 1, 1 };
+  Context context(DeviceType::kCPU, 0);
+
+  NDArray data_a(Shape(2, 1, 5, 4), context, false);
+  data_a.SyncCopyFromCPU(data_v);
+
+  NDArray filter_a(Shape(1, 1, 2, 4), context, false);
+  filter_a.SyncCopyFromCPU(filter_v);
+
+  NDArray bias_a(Shape(1), context);
+  NDArray::SampleUniform(0, 0, &bias_a);
+
+  Symbol data = Symbol::Variable("data");
+  Symbol weight = Symbol::Variable("weight");
+  Symbol bias = Symbol::Variable("bias");
+  map<string, NDArray> args;
+  args.emplace(data.name(), data_a);
+  args.emplace(weight.name(), filter_a);
+  args.emplace(bias.name(), bias_a);
+  auto conv = Convolution("conv", data, weight, bias, Shape(2, 4), 1);
+  auto exe = conv.SimpleBind(context, args);
+  exe->Forward(false);
+  exe->outputs[0].WaitToRead();
+  auto result = exe->outputs[0].GetData();
+  for (int i = 0; i < 8; ++i)
+    cerr << result[i] << endl;
+}
+
+void local_run(char *argv[])
 {
   KVStore kv;
   DeepQA deepqa(std::move(kv), argv[1], argv[2]);
-  deepqa.run(argv[3]);
+  deepqa.run(argv[3]);// , "E:\\v-lxini\\data\\weights\\");
+}
+
+void testpool()
+{
+  ifstream in("E:\\v-lxini\\data\\weights\\q_bias_act_50x100x74x1.txt");
+  vector<float> act_v;
+  for (int i = 0; i < 74; ++i)
+  {
+    float x;
+    in >> x;
+    act_v.push_back(x);
+  }
+  Context context(DeviceType::kCPU, 0);
+  NDArray act_a(Shape(1, 1, 74, 1), context, false);
+  act_a.SyncCopyFromCPU(act_v);
+  Symbol act = Symbol::Variable("act");
+  map<string, NDArray> args;
+  args[act.name()] = act_a;
+  Symbol pool = Pooling("pooling", act, Shape(74, 1), PoolingPoolType::max);
+  auto exe = pool.SimpleBind(context, args);
+  exe->Forward(false);
+  exe->outputs[0].WaitToRead();
+  auto result = exe->outputs[0].GetData();
+  cerr << result[0] << endl;
+}
+
+// argv[1]: data path, argv[2]: embedding path, argv[3]: optional validation path
+int main(int argc, char *argv[])
+{
+  /*
+  data_split("E:\\v-lxini\\data\\TREC\\", "train.xml", 8);
+  KVStore kv("dist_async");
+  if (kv.GetRole() != "worker")
+  {
+    kv.RunServer();
+    return 0;
+  }
+  */
+  //testconv();
+  local_run(argv);
+  //testpool();
   getchar();
 }

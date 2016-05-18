@@ -13,6 +13,20 @@
 using namespace std;
 using namespace mxnet::cpp;
 
+Symbol Multiply(const string& name, Symbol data, Symbol weight, Symbol bias,
+    mx_uint N, mx_uint K, mx_uint M)
+{
+  auto swapped_weight = SwapAxis(name + "_weight_transpose", weight, 0, 1);
+  return FullyConnected(name, data, swapped_weight, M, bias);
+}
+
+Symbol Multiply(const string& name, Symbol data, Symbol weight,
+  mx_uint N, mx_uint K, mx_uint M)
+{
+  auto swapped_weight = SwapAxis(name + "_weight_transpose", weight, 0, 1);
+  return FullyConnected(name, data, swapped_weight, M);
+}
+
 class DeepQA
 {
 public:
@@ -22,7 +36,7 @@ public:
     word2vec_(embeddings_path),
     context_(Context(DeviceType::kCPU, 0))
   {
-    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 1e-2, 1e-5));
+    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 3e-2, 1e-5));
     (*opt).SetParam("momentum", 0.9)
       .SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers() * BATCH_SIZE));
     kv_.SetOptimizer(std::move(opt));
@@ -35,14 +49,14 @@ public:
       */
 
       //auto join_layer = Concat("q_sim_a", { q_pooling_2d, sim, a_pooling_2d }, 3, 1);
-  void run(const string& validation_path = "")
+  void run(const string& validation_path = "", const string& weights_path = "")
   {
     std::vector<mx_float> questions, answers, q_overlap, a_overlap, ratings, predictions;
     questions.reserve(BATCH_SIZE * SENTENCE_LENGTH * word2vec_.length());
     answers.reserve(BATCH_SIZE * SENTENCE_LENGTH * word2vec_.length());
     q_overlap.reserve(BATCH_SIZE * SENTENCE_LENGTH * 3);
     a_overlap.reserve(BATCH_SIZE * SENTENCE_LENGTH * 3);
-    ratings.reserve(BATCH_SIZE * SENTENCE_LENGTH);
+    ratings.reserve(BATCH_SIZE * SENTENCE_LENGTH * 2);
 
     vector<NDArray> q_array_v, a_array_v, q_overlap_array_v, a_overlap_array_v, r_array_v;
     NDArray r_array_v_merge;
@@ -51,9 +65,11 @@ public:
     {
       unique_ptr<DataReader> validation_reader(DataReader::Create(validation_path, BATCH_SIZE));
       vector<mx_float> all_ratings;
+      size_t dev_size = 0;
       while (true)
       {
         auto validation_data = validation_reader->ReadBatch();
+        dev_size += validation_data.size();
         if (validation_data.size() != BATCH_SIZE)
           break;
         questions.clear(); answers.clear(); q_overlap.clear(); a_overlap.clear(); ratings.clear();
@@ -103,8 +119,8 @@ public:
       r_array_v_merge = NDArray(Shape(q_array_v.size() * BATCH_SIZE), context_, false);
       r_array_v_merge.SyncCopyFromCPU(all_ratings);
       predictions.reserve(q_array_v.size() * BATCH_SIZE);
+      cerr << "Validation Size = " << dev_size << endl;
     }
-    cerr << "Validation Size = " << q_array_v.size() << endl;
 
     bool init_kv = false;
 
@@ -112,24 +128,52 @@ public:
 
     map<string, NDArray> args;
     // Net
-    NDArray overlap_emb_array = generate_overlap_emb();
-    auto overlap_emb = Symbol::Variable("overlap_emb");
-    args.emplace(overlap_emb.name(), overlap_emb_array);
-
     auto q_input = Symbol::Variable("q_input");
     auto q_overlap_input = Symbol::Variable("q_overlap_input");
-    auto q_embedded_overlap = OverlapEmbeddingLayer("q", q_overlap_input, overlap_emb, args);
+
+    auto q_embedded_overlap = OverlapEmbeddingLayer("q", q_overlap_input, args);
+    if (!weights_path.empty())
+      args["q_overlap_embedding"] = loadtxt(weights_path + "q3x5", context_, Shape(3, 5));
+    
     auto q_conv = ConvLayer("q", q_input, q_embedded_overlap,
-      ActivationType, PoolingPoolType::max, false, args);
+      ActivationType, PoolingPoolType::max, true, args);
+    if (!weights_path.empty())
+    {
+      args["q_weight"] =
+        loadtxt(weights_path + "q100x1x5x55", context_, Shape(100, 1, 5, 55));
+      args["q_bias"] =
+        loadtxt(weights_path + "q100", context_, Shape(100));
+    }
 
     auto a_input = Symbol::Variable("a_input");
     auto a_overlap_input = Symbol::Variable("a_overlap_input");
-    auto a_embedded_overlap = OverlapEmbeddingLayer("a", a_overlap_input, overlap_emb, args);
+    auto a_embedded_overlap = OverlapEmbeddingLayer("a", a_overlap_input, args);
+    if (!weights_path.empty())
+      args["a_overlap_embedding"] = loadtxt(weights_path + "a3x5", context_, Shape(3, 5));
+    
     auto a_conv = ConvLayer("a", a_input, a_embedded_overlap,
-      ActivationType, PoolingPoolType::max, false, args);
+      ActivationType, PoolingPoolType::max, true, args);
+    if (!weights_path.empty())
+    {
+      args["a_weight"] =
+        loadtxt(weights_path + "a100x1x5x55", context_, Shape(100, 1, 5, 55));
+      args["a_bias"] =
+        loadtxt(weights_path + "a100", context_, Shape(100));
+    }
 
     auto labels = Symbol::Variable("labels");
     auto output = ClassificationLayer(q_conv, a_conv, labels, ActivationType, args);
+    if (!weights_path.empty())
+    {
+      args["hidden_weight"] =
+        loadtxt(weights_path + "200x200", context_, Shape(200, 200));
+      args["hidden_bias"] =
+        loadtxt(weights_path + "200", context_, Shape(200));
+      args["lr_weight"] =
+        loadtxt(weights_path + "200x2", context_, Shape(200, 2));
+      args["lr_bias"] =
+        loadtxt(weights_path + "2", context_, Shape(2));
+    }
 
     map<string, OpReqType> reqtypes;
     reqtypes[q_input.name()] = OpReqType::kNullOp;
@@ -138,87 +182,107 @@ public:
     reqtypes[a_overlap_input.name()] = OpReqType::kNullOp;
     reqtypes[labels.name()] = OpReqType::kNullOp;
 
+    map<string, int> args_index;
+    auto argument_list = output.ListArguments();
+    for (size_t i = 0; i < argument_list.size(); ++i)
+      if (reqtypes.count(argument_list[i]) >= 0)
+        args_index.emplace(argument_list[i], i);
+
     auto time_start = chrono::high_resolution_clock::now();
     size_t processed = 0;
     auto t1 = chrono::high_resolution_clock::now();
 
-    for (size_t epoch = 0; epoch < 5; ++epoch)
+    for (size_t epoch = 0; epoch < NUM_EPOCH; ++epoch)
     {
-      reader_->Reset();
-      size_t batch_count = 0;
-      while (true)
+      if (weights_path.empty()) // train
       {
-        cerr << '.';
-        ++batch_count;
-        auto batch = reader_->ReadBatch();
-        //LG << "Destruct in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        t1 = chrono::high_resolution_clock::now();
-        //LG << "Read data batch in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        if (batch.size() != BATCH_SIZE)
-          break;
-        processed += BATCH_SIZE;
-        t1 = chrono::high_resolution_clock::now();
-        questions.clear(); answers.clear(); q_overlap.clear(); a_overlap.clear(); ratings.clear();
-        //LG << "clear last vector in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        for (const auto &item : batch)
+        reader_->Reset();
+        size_t batch_count = 0;
+        while (true)
         {
-          seq2vec(questions, get<0>(item), SENTENCE_LENGTH);
-          seq2vec(answers, get<1>(item), SENTENCE_LENGTH);
-          overlap2vec(q_overlap, get<2>(item), SENTENCE_LENGTH);
-          overlap2vec(a_overlap, get<3>(item), SENTENCE_LENGTH);
-          ratings.push_back(get<4>(item));
-        }
-        NDArray q_array(vector<mx_uint>{ BATCH_SIZE, 1, SENTENCE_LENGTH,
-          (mx_uint)word2vec_.length()}, context_, false);
-        NDArray q_overlap_array(vector<mx_uint>{ BATCH_SIZE * SENTENCE_LENGTH, 3 }, context_, false);
-        NDArray a_array(vector<mx_uint>{ BATCH_SIZE, 1, SENTENCE_LENGTH, 
-          (mx_uint)word2vec_.length()}, context_, false);
-        NDArray a_overlap_array(vector<mx_uint>{ BATCH_SIZE * SENTENCE_LENGTH, 3 }, context_, false);
-        NDArray r_array(Shape(BATCH_SIZE), context_, false);
-        q_array.SyncCopyFromCPU(questions);
-        q_overlap_array.SyncCopyFromCPU(q_overlap);
-        a_array.SyncCopyFromCPU(answers);
-        a_overlap_array.SyncCopyFromCPU(a_overlap);
-        r_array.SyncCopyFromCPU(ratings);
-        //LG << "preprocess data in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-
-        t1 = chrono::high_resolution_clock::now();
-        args[q_input.name()] = q_array;
-        args[q_overlap_input.name()] = q_overlap_array;
-        args[a_input.name()] = a_array;
-        args[a_overlap_input.name()] = a_overlap_array;
-        args[labels.name()] = r_array;
-
-        unique_ptr<Executor> exe(output.SimpleBind(context_, args, {}, reqtypes));
-        vector<int> indices(exe->arg_arrays.size());
-        iota(indices.begin(), indices.end(), 0);
-        if (!init_kv) {
-          kv_.Init(indices, exe->arg_arrays);
-          kv_.Pull(indices, &exe->arg_arrays);
-          init_kv = true;
-        }
-        exe->Forward(true);
-        exe->Backward();
-        kv_.Push(indices, exe->grad_arrays);
-        if (false)
-        {
-          for (const auto& params : args)
+          cerr << '.';
+          ++batch_count;
+          auto batch = reader_->ReadBatch();
+          //LG << "Destruct in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
+          t1 = chrono::high_resolution_clock::now();
+          //LG << "Read data batch in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
+          if (batch.size() != BATCH_SIZE)
+            break;
+          processed += BATCH_SIZE;
+          t1 = chrono::high_resolution_clock::now();
+          questions.clear(); answers.clear(); q_overlap.clear(); a_overlap.clear(); ratings.clear();
+          //LG << "clear last vector in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
+          for (const auto &item : batch)
           {
-            const mx_float *data = params.second.GetData();
-            auto shape = params.second.GetShape();
-            size_t length = accumulate(shape.begin(), shape.end(), 1, [](size_t a, size_t b) {
-              return a*b;
-            });
-            //cerr << params.first << "=" << data[0] << endl;
-            cerr << params.first << "=" << accumulate(data, data + length, 0.0f) << endl;
+            seq2vec(questions, get<0>(item), SENTENCE_LENGTH);
+            seq2vec(answers, get<1>(item), SENTENCE_LENGTH);
+            overlap2vec(q_overlap, get<2>(item), SENTENCE_LENGTH);
+            overlap2vec(a_overlap, get<3>(item), SENTENCE_LENGTH);
+            ratings.push_back(get<4>(item));
           }
-          cerr << "----------------------------------------" << endl;
+          NDArray q_array(vector<mx_uint>{ BATCH_SIZE, 1, SENTENCE_LENGTH,
+            (mx_uint)word2vec_.length()}, context_, false);
+          NDArray q_overlap_array(vector<mx_uint>{ BATCH_SIZE * SENTENCE_LENGTH, 3 }, context_, false);
+          NDArray a_array(vector<mx_uint>{ BATCH_SIZE, 1, SENTENCE_LENGTH,
+            (mx_uint)word2vec_.length()}, context_, false);
+          NDArray a_overlap_array(vector<mx_uint>{ BATCH_SIZE * SENTENCE_LENGTH, 3 }, context_, false);
+          NDArray r_array(Shape(BATCH_SIZE), context_, false);
+          q_array.SyncCopyFromCPU(questions);
+          q_overlap_array.SyncCopyFromCPU(q_overlap);
+          a_array.SyncCopyFromCPU(answers);
+          a_overlap_array.SyncCopyFromCPU(a_overlap);
+          r_array.SyncCopyFromCPU(ratings);
+          //LG << "preprocess data in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
+
+          t1 = chrono::high_resolution_clock::now();
+          args[q_input.name()] = q_array;
+          args[q_overlap_input.name()] = q_overlap_array;
+          args[a_input.name()] = a_array;
+          args[a_overlap_input.name()] = a_overlap_array;
+          args[labels.name()] = r_array;
+
+          unique_ptr<Executor> exe(output.SimpleBind(context_, args, {}));//, reqtypes));
+          vector<int> indices(exe->arg_arrays.size());
+          iota(indices.begin(), indices.end(), 0);
+          if (!init_kv)
+          {
+            kv_.Init(indices, exe->arg_arrays);
+            //kv_.Pull(indices, &exe->arg_arrays);
+            init_kv = true;
+          }
+          exe->Forward(true);
+          exe->Backward();
+          /*
+          for (const auto& pair : args_index)
+          {
+            cerr << pair.first << ":";
+            cerr << " [0] " << exe->grad_arrays[pair.second].GetData()[0];
+            cerr << ", [1] " << exe->grad_arrays[pair.second].GetData()[1];
+            cerr << endl;
+          }
+          getchar();
+          */
+          kv_.Push(indices, exe->grad_arrays);
+          if (false)
+          {
+            for (const auto& params : args)
+            {
+              const mx_float *data = params.second.GetData();
+              auto shape = params.second.GetShape();
+              size_t length = accumulate(shape.begin(), shape.end(), 1, [](size_t a, size_t b) {
+                return a*b;
+              });
+              //cerr << params.first << "=" << data[0] << endl;
+              cerr << params.first << "=" << accumulate(data, data + length, 0.0f) << endl;
+            }
+            cerr << "----------------------------------------" << endl;
+          }
+          kv_.Pull(indices, &exe->arg_arrays);
+          //LG << "ff bp in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
+          t1 = chrono::high_resolution_clock::now();
         }
-        kv_.Pull(indices, &exe->arg_arrays);
-        //LG << "ff bp in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        t1 = chrono::high_resolution_clock::now();
+        cerr << endl << batch_count << " batches" << endl;
       }
-      cerr << endl << batch_count << " batches" << endl;
       // Validation
       if (q_array_v.size() > 0)
       {
@@ -235,7 +299,11 @@ public:
           exe->Forward(false);
           exe->outputs[0].WaitToRead();
           const mx_float *result = exe->outputs[0].GetData();
-          predictions.insert(predictions.end(), result, result + BATCH_SIZE);
+          if (USE_SOFTMAX)
+		        for (size_t j = 0; j < BATCH_SIZE*2; j += 2)
+			        predictions.push_back(result[j + 1]);
+          else
+            predictions.insert(predictions.end(), result, result + BATCH_SIZE);
         }
         NDArray result(Shape(q_array_v.size() * BATCH_SIZE), context_, false);
         result.SyncCopyFromCPU(predictions);
@@ -248,11 +316,13 @@ public:
   }
 
 private:
-  static const mx_uint BATCH_SIZE = 100;
+  static const bool USE_SOFTMAX = true;
+  static const mx_uint BATCH_SIZE = 50;
   static const mx_uint NUM_FILTER = 100;
   static const mx_uint FILTER_WIDTH = 5;
   static const mx_uint OVERLAP_LENGTH = 5;
   static const mx_uint SENTENCE_LENGTH = 70;
+  static const mx_uint NUM_EPOCH = 40;
   unique_ptr<DataReader> reader_;
   Embeddings word2vec_;
   Context context_;
@@ -294,14 +364,14 @@ private:
     args.emplace(weight.name(), weight_array);
 
     auto bias = Symbol::Variable(prefix + "_bias");
-    NDArray bias_array(vector<mx_uint>{FILTER_WIDTH, (mx_uint)word2vec_.length() + OVERLAP_LENGTH},
-      context_);
+    NDArray bias_array(Shape(NUM_FILTER), context_);
+    //NDArray::SampleUniform(0, 0, &bias_array);
     NDArray::SampleGaussian(0, 1, &bias_array);
     args.emplace(bias.name(), bias_array);
 
     auto conv = Convolution(prefix + "_conv", input_overlap, weight, bias,
-      Shape(FILTER_WIDTH, word2vec_.length() + OVERLAP_LENGTH), NUM_FILTER,
-      Shape(1, 1), Shape(1, 1), Shape(0, 0), 1, 512, true);
+      Shape(FILTER_WIDTH, word2vec_.length() + OVERLAP_LENGTH), NUM_FILTER);
+      //Shape(1, 1), Shape(1, 1), Shape(0, 0), 1, 512, true);
     // Output Shape (with padding): batch, 1, l+w-1, 1
     //           (without padding): batch, 1, l-w+1, 1
     size_t output_length = SENTENCE_LENGTH + (padding?1:-1)*(FILTER_WIDTH - 1);
@@ -325,33 +395,46 @@ private:
 
     auto hidden_bias = Symbol::Variable("hidden_bias");
     NDArray hidden_bias_array(vector<mx_uint>{join_length}, context_);
-    NDArray::SampleUniform(0, 0, &hidden_bias_array);
-    //NDArray::SampleGaussian(0, 1, &hidden_bias_array);
+    //NDArray::SampleUniform(0, 0, &hidden_bias_array);
+    NDArray::SampleGaussian(0, 1, &hidden_bias_array);
     args.emplace(hidden_bias.name(), hidden_bias_array);
 
     auto hidden_layer = Activation("hidden_layer_act",
-      FullyConnected("hidden_layer", join_layer, hidden_weight, join_length, hidden_bias),
-      ActivationType);
+        Multiply("hidden_layer", join_layer, hidden_weight, hidden_bias,
+            BATCH_SIZE, join_length, join_length),
+        ActivationType);
+
     auto lr_weight = Symbol::Variable("lr_weight");
-    NDArray lr_weight_array(vector<mx_uint>{1, join_length}, context_);
-    NDArray::SampleGaussian(0, 1, &lr_weight_array);
+    NDArray lr_weight_array(Shape(join_length, 1 + USE_SOFTMAX), context_);
+    //NDArray::SampleGaussian(0, 1, &lr_weight_array);
+    NDArray::SampleUniform(0, 0, &lr_weight_array);
     args.emplace(lr_weight.name(), lr_weight_array);
 
     auto lr_bias = Symbol::Variable("lr_bias");
-    NDArray lr_bias_array(vector<mx_uint>{1}, context_);
-    NDArray::SampleGaussian(0, 1, &lr_bias_array);
+    NDArray lr_bias_array(Shape(1 + USE_SOFTMAX), context_);
+    NDArray::SampleUniform(0, 0, &lr_bias_array);
+    //NDArray::SampleGaussian(0, 1, &lr_bias_array);
     args.emplace(lr_bias.name(), lr_bias_array);
 
-    auto lr = FullyConnected("lr", hidden_layer, lr_weight, 1, lr_bias);
+    auto lr = Multiply("lr", hidden_layer, lr_weight, lr_bias,
+        join_length, join_length, 1 + USE_SOFTMAX);
+    if (USE_SOFTMAX)
+      return SoftmaxOutput("softmax", lr, labels);
     return LogisticRegressionOutput("sigmoid", lr, labels);
   }
 
-  Symbol OverlapEmbeddingLayer(string prefix, Symbol overlap, Symbol embedding,
+  Symbol OverlapEmbeddingLayer(string prefix, Symbol overlap,
       map<string, NDArray>& args)
   {
+    Symbol embedding(prefix + "_overlap_embedding");
+    NDArray overlap_emb(Shape(3, OVERLAP_LENGTH), context_, false);
+    NDArray::SampleGaussian(0, 1, &overlap_emb);
+    args.emplace(embedding.name(), overlap_emb);
+
     return Reshape(prefix + "_overlap_emb_reshape",
-      FullyConnected(prefix + "_overlap_emb", overlap, embedding, OVERLAP_LENGTH),
-      Shape(BATCH_SIZE, 1, SENTENCE_LENGTH, OVERLAP_LENGTH));
+        Multiply(prefix + "_overlap_emb", overlap, embedding,
+            BATCH_SIZE * SENTENCE_LENGTH * 3, 3, OVERLAP_LENGTH),
+        Shape(BATCH_SIZE, 1, SENTENCE_LENGTH, OVERLAP_LENGTH));
   }
 
   mx_float auc(NDArray results, NDArray labels)

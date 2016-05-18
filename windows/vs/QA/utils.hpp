@@ -2,6 +2,21 @@
 #include <vector>
 #include <string>
 #include <set>
+#include "MxNetCpp.h""
+
+mxnet::cpp::NDArray loadtxt(std::string filepath,
+    mxnet::cpp::Context context, mxnet::cpp::Shape shape)
+{
+  std::ifstream in(filepath + ".txt");
+  std::vector<mx_float> data;
+  data.reserve(shape.Size());
+  mx_float f;
+  while (in >> f)
+    data.push_back(f);
+  mxnet::cpp::NDArray result(shape, context, false);
+  result.SyncCopyFromCPU(data);
+  return result;
+}
 
 std::vector<std::string> split(std::string s, char delimiter = ' ')
 {
