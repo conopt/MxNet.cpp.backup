@@ -34,12 +34,13 @@ public:
     kv_(move(kv)),
     reader_(DataReader::Create(data_path, BATCH_SIZE)),
     word2vec_(embeddings_path),
+#if MXNET_USE_CUDA && DEBUG==0
+    context_(Context(DeviceType::kGPU, 0))
+#else
     context_(Context(DeviceType::kCPU, 0))
+#endif
   {
-    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 3e-2, 1e-5));
-    (*opt).SetParam("momentum", 0.9)
-      .SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers() * BATCH_SIZE));
-    kv_.SetOptimizer(std::move(opt));
+
   }
       /*
       auto sim_weight = Symbol::Variable("sim_weight"); // NUM_FILTER * NUM_FILTER
@@ -191,7 +192,14 @@ public:
     auto time_start = chrono::high_resolution_clock::now();
     size_t processed = 0;
     auto t1 = chrono::high_resolution_clock::now();
-
+    
+    for (auto arg : output.ListArguments())
+      cerr << arg << endl;
+    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 1e-2, 1e-5));
+    //(*opt).SetParam("rho", 0.9)
+    //     .SetParam("eps", 1e-5);
+    (*opt).SetParam("momentum", 0.9);
+    kv_.SetOptimizer(std::move(opt));
     for (size_t epoch = 0; epoch < NUM_EPOCH; ++epoch)
     {
       if (weights_path.empty()) // train
@@ -202,6 +210,7 @@ public:
         {
           cerr << '.';
           ++batch_count;
+
           auto batch = reader_->ReadBatch();
           //LG << "Destruct in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
           t1 = chrono::high_resolution_clock::now();
@@ -263,6 +272,7 @@ public:
           getchar();
           */
           kv_.Push(indices, exe->grad_arrays);
+          /*
           if (false)
           {
             for (const auto& params : args)
@@ -277,6 +287,8 @@ public:
             }
             cerr << "----------------------------------------" << endl;
           }
+          */
+
           kv_.Pull(indices, &exe->arg_arrays);
           //LG << "ff bp in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
           t1 = chrono::high_resolution_clock::now();
@@ -298,15 +310,19 @@ public:
           unique_ptr<Executor> exe(output.SimpleBind(context_, args, {}, reqtypes));
           exe->Forward(false);
           exe->outputs[0].WaitToRead();
-          const mx_float *result = exe->outputs[0].GetData();
+          vector<mx_float> result(BATCH_SIZE*(1 + USE_SOFTMAX));
+          exe->outputs[0].SyncCopyToCPU(result.data(), result.size());
           if (USE_SOFTMAX)
 		        for (size_t j = 0; j < BATCH_SIZE*2; j += 2)
 			        predictions.push_back(result[j + 1]);
           else
-            predictions.insert(predictions.end(), result, result + BATCH_SIZE);
+            predictions.insert(predictions.end(), result.begin(), result.begin() + BATCH_SIZE);
         }
         NDArray result(Shape(q_array_v.size() * BATCH_SIZE), context_, false);
         result.SyncCopyFromCPU(predictions);
+        for (int i = 0; i < 50; ++i)
+          cerr << predictions[i] << ' ';
+        cerr << endl;
         //LG << "Validate in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
         cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) << " Samples/s: " <<
           processed * 1000.0 / chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - time_start).count() << endl;
@@ -322,7 +338,7 @@ private:
   static const mx_uint FILTER_WIDTH = 5;
   static const mx_uint OVERLAP_LENGTH = 5;
   static const mx_uint SENTENCE_LENGTH = 70;
-  static const mx_uint NUM_EPOCH = 40;
+  static const mx_uint NUM_EPOCH = 400;
   unique_ptr<DataReader> reader_;
   Embeddings word2vec_;
   Context context_;
@@ -423,11 +439,17 @@ private:
     return LogisticRegressionOutput("sigmoid", lr, labels);
   }
 
+  NDArray overlap_emb_;
   Symbol OverlapEmbeddingLayer(string prefix, Symbol overlap,
       map<string, NDArray>& args)
   {
     Symbol embedding(prefix + "_overlap_embedding");
     NDArray overlap_emb(Shape(3, OVERLAP_LENGTH), context_, false);
+    if (false && overlap_emb_.GetShape().empty())
+    {
+      overlap_emb_ = NDArray(Shape(3, OVERLAP_LENGTH), context_);
+      //NDArray::SampleGaussian(0, 0.25, &overlap_emb_);
+    }
     NDArray::SampleGaussian(0, 1, &overlap_emb);
     args.emplace(embedding.name(), overlap_emb);
 
@@ -440,9 +462,10 @@ private:
   mx_float auc(NDArray results, NDArray labels)
   {
     results.WaitToRead();
-    const mx_float *result_data = results.GetData();
-    const mx_float *label_data = labels.GetData();
     const int n = labels.GetShape()[0];
+    vector<mx_float> result_data(n), label_data(n);
+    results.SyncCopyToCPU(result_data.data(), n);
+    labels.SyncCopyToCPU(label_data.data(), n);
     vector<pair<mx_float, mx_float>> samples;
     for (int i = 0; i < n; ++i)
       samples.emplace_back(result_data[i], label_data[i]);
@@ -485,9 +508,10 @@ private:
   float aucroc(NDArray results, NDArray labels)
   {
     results.WaitToRead();
-    const mx_float *result_data = results.GetData();
-    const mx_float *label_data = labels.GetData();
     const int l = labels.GetShape()[0];
+    vector<mx_float> result_data(l), label_data(l);
+    results.SyncCopyToCPU(result_data.data(), l);
+    labels.SyncCopyToCPU(label_data.data(), l);
     const float STEP = 0.01;
     vector<pair<float, float>> coords;
     for (float threshold = STEP; threshold < 1; threshold += STEP)
@@ -515,8 +539,10 @@ private:
   float accuracy(NDArray results, NDArray labels)
   {
     results.WaitToRead();
-    const mx_float *result_data = results.GetData();
-    const mx_float *label_data = labels.GetData();
+    const int n = results.GetShape()[0];
+    vector<mx_float> result_data(n), label_data(n);
+    results.SyncCopyToCPU(result_data.data(), n);
+    labels.SyncCopyToCPU(label_data.data(), n);
     size_t correct = 0;
     size_t total = labels.GetShape()[0];
     for (int i = 0; i < total; ++i)
