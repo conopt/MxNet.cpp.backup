@@ -97,7 +97,8 @@ void local_run(char *argv[])
 {
   KVStore kv;
   DeepQA deepqa(std::move(kv), argv[1], argv[2]);
-  deepqa.run(argv[3]);// , "E:\\v-lxini\\data\\weights\\");
+  //deepqa.run(argv[3] , "E:\\v-lxini\\data\\weights\\");
+  deepqa.run(argv[3]);
 }
 
 void testpool()
@@ -124,6 +125,35 @@ void testpool()
   cerr << result[0] << endl;
 }
 
+void testbackward()
+{
+  int b = 50;
+  vector<float> x_v(b*2, 0.0f);
+  Context context(DeviceType::kCPU, 0);
+  NDArray x_a(Shape(b, 2), context, false);
+  x_a.SyncCopyFromCPU(x_v);
+  vector<float> y_v(b, 1.0f);
+  NDArray y_a(Shape(b), context, false);
+  y_a.SyncCopyFromCPU(y_v);
+  map<string, NDArray> args;
+  auto x = Symbol::Variable("x");
+  args[x.name()] = x_a;
+  auto y = Symbol::Variable("y");
+  args[y.name()] = y_a;
+  auto sm = SoftmaxOutput("softmax", x, y);
+  auto exe = sm.SimpleBind(context, args);
+  exe->Forward(true);
+  exe->Backward();
+  exe->grad_arrays[0].WaitToRead();
+  vector<float> p(b*2);
+  exe->grad_arrays[0].SyncCopyToCPU(p.data(), p.size());
+  for (int i = 0; i < b; ++i)
+  {
+    cerr << p[i * 2] << ", " << p[i * 2 + 1];
+    cerr << endl;
+  }
+}
+
 // argv[1]: data path, argv[2]: embedding path, argv[3]: optional validation path
 int main(int argc, char *argv[])
 {
@@ -139,5 +169,6 @@ int main(int argc, char *argv[])
   //testconv();
   local_run(argv);
   //testpool();
+  //testbackward();
   getchar();
 }
