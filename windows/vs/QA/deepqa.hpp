@@ -40,9 +40,10 @@ public:
     context_(Context(DeviceType::kCPU, 0))
 #endif
   {
-    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 3e-2, 1e-5));
-    (*opt).SetParam("momentum", 0.9)
-      .SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers() * BATCH_SIZE));
+    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.1, 0));
+    //(*opt).SetParam("rho", 0.95).SetParam("eps", 1e-6);
+    //(*opt).SetParam("momentum", 0.9)
+    (*opt).SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers()));
     kv_.SetOptimizer(std::move(opt));
   }
       /*
@@ -53,7 +54,8 @@ public:
       */
 
       //auto join_layer = Concat("q_sim_a", { q_pooling_2d, sim, a_pooling_2d }, 3, 1);
-  void run(const string& validation_path = "", const string& weights_path = "")
+  void run(const string& validation_path = "", const string& weights_path = "",
+      bool train_mode = true)
   {
     std::vector<mx_float> questions, answers, q_overlap, a_overlap, ratings, predictions;
     questions.reserve(BATCH_SIZE * SENTENCE_LENGTH * word2vec_.length());
@@ -198,7 +200,7 @@ public:
 
     for (size_t epoch = 0; epoch < NUM_EPOCH; ++epoch)
     {
-      if (weights_path.empty()) // train
+      if (train_mode)
       {
         reader_->Reset();
         size_t batch_count = 0;
@@ -312,6 +314,7 @@ public:
         }
         NDArray result(Shape(q_array_v.size() * BATCH_SIZE), context_, false);
         result.SyncCopyFromCPU(predictions);
+        //for (int i = 0; i < 10; ++i) cerr << predictions[i] << ' '; cerr << endl;
         //LG << "Validate in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
         cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) << " Samples/s: " <<
           processed * 1000.0 / chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - time_start).count() << endl;
@@ -327,7 +330,7 @@ private:
   static const mx_uint FILTER_WIDTH = 5;
   static const mx_uint OVERLAP_LENGTH = 5;
   static const mx_uint SENTENCE_LENGTH = 70;
-  static const mx_uint NUM_EPOCH = 40;
+  static const mx_uint NUM_EPOCH = 10;
   unique_ptr<DataReader> reader_;
   Embeddings word2vec_;
   Context context_;
@@ -364,7 +367,7 @@ private:
     NDArray weight_array(vector<mx_uint>{NUM_FILTER, 1, FILTER_WIDTH,
       (mx_uint)word2vec_.length() + OVERLAP_LENGTH}, context_);
     //NDArray::SampleGaussian(0, 1, &weight_array);
-    float bound = sqrt(1.0f / FILTER_WIDTH * (word2vec_.length() + OVERLAP_LENGTH));
+    float bound = sqrt(1.0f / (FILTER_WIDTH * (word2vec_.length() + OVERLAP_LENGTH)));
     NDArray::SampleUniform(-bound, bound, &weight_array);
     args.emplace(weight.name(), weight_array);
 
@@ -400,8 +403,8 @@ private:
 
     auto hidden_bias = Symbol::Variable("hidden_bias");
     NDArray hidden_bias_array(vector<mx_uint>{join_length}, context_);
-    //NDArray::SampleUniform(0, 0, &hidden_bias_array);
-    NDArray::SampleGaussian(0, 1, &hidden_bias_array);
+    NDArray::SampleUniform(0, 0, &hidden_bias_array);
+    //NDArray::SampleGaussian(0, 1, &hidden_bias_array);
     args.emplace(hidden_bias.name(), hidden_bias_array);
 
     auto hidden_layer = Activation("hidden_layer_act",
@@ -424,17 +427,31 @@ private:
     auto lr = Multiply("lr", hidden_layer, lr_weight, lr_bias,
         join_length, join_length, 1 + USE_SOFTMAX);
     if (USE_SOFTMAX)
-      return SoftmaxOutput("softmax", lr, labels);
+      return SoftmaxOutput("softmax", lr, labels);// , 1.0f, -1.0f, true);
     return LogisticRegressionOutput("sigmoid", lr, labels);
   }
 
+  NDArray oe_;
   Symbol OverlapEmbeddingLayer(string prefix, Symbol overlap,
       map<string, NDArray>& args)
   {
     Symbol embedding(prefix + "_overlap_embedding");
+    /*
     NDArray overlap_emb(Shape(3, OVERLAP_LENGTH), context_, false);
     NDArray::SampleGaussian(0, 1, &overlap_emb);
     args.emplace(embedding.name(), overlap_emb);
+    */
+    if (oe_.GetShape().empty())
+    {
+      oe_ = NDArray(Shape(3, OVERLAP_LENGTH), context_, false);
+      NDArray::SampleGaussian(0, 0.25, &oe_);
+      vector<float> oe_v(3 * OVERLAP_LENGTH);
+      oe_.SyncCopyToCPU(oe_v.data(), oe_v.size());
+      for (int i = 2 * OVERLAP_LENGTH; i < 3 * OVERLAP_LENGTH; ++i)
+        oe_v[i] = 0;
+      oe_.SyncCopyFromCPU(oe_v);
+    }
+    args.emplace(embedding.name(), oe_);
 
     return Reshape(prefix + "_overlap_emb_reshape",
         Multiply(prefix + "_overlap_emb", overlap, embedding,

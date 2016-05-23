@@ -93,12 +93,15 @@ void testconv()
     cerr << result[i] << endl;
 }
 
-void local_run(char *argv[])
+void local_run(int argc, char *argv[])
 {
   KVStore kv;
   DeepQA deepqa(std::move(kv), argv[1], argv[2]);
-  //deepqa.run(argv[3] , "E:\\v-lxini\\data\\weights\\");
-  deepqa.run(argv[3]);
+  //deepqa.run(argv[3] , "E:\\v-lxini\\data\\1st_weights\\");
+  if (argc > 3)
+    deepqa.run(argv[3]);
+  else
+    deepqa.run();
 }
 
 void testpool()
@@ -167,7 +170,7 @@ int main(int argc, char *argv[])
   }
   */
   //testconv();
-  local_run(argv);
+  local_run(argc, argv);
   //testpool();
   //testbackward();
   getchar();
