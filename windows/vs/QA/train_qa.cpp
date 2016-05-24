@@ -1,4 +1,5 @@
 #include "deepqa.hpp"
+#include <windows.h>
 using namespace std;
 using namespace mxnet::cpp;
 
@@ -98,10 +99,31 @@ void local_run(int argc, char *argv[])
   KVStore kv;
   DeepQA deepqa(std::move(kv), argv[1], argv[2]);
   //deepqa.run(argv[3] , "E:\\v-lxini\\data\\1st_weights\\");
-  if (argc > 3)
-    deepqa.run(argv[3]);
-  else
-    deepqa.run();
+  deepqa.run(argv[3]);
+}
+
+void distributed_run(int argc, char*argv[])
+{
+  const char *kv_env = getenv("KV_MODE");
+#ifdef USE_CHANA
+  string kv_mode = kv_env == nullptr ? "dist_async#worker_machine_list#1" : kv_env;
+#else
+  string kv_mode = kv_env == nullptr ? "dist_async" : kv_env;
+#endif
+  KVStore kv(kv_mode);
+#ifdef USE_CHANA
+    kv.RunServer();
+#else
+  if (kv.GetRole() != "worker")
+  {
+    kv.RunServer();
+    return;
+  }
+#endif
+  int rank = kv.GetRank();
+  string suffix = ".part" + to_string(rank) + ".tsv";
+  DeepQA deepqa(std::move(kv), argv[1] + suffix, argv[2]);
+  deepqa.run(argv[3]);
 }
 
 void testpool()
@@ -162,16 +184,12 @@ int main(int argc, char *argv[])
 {
   /*
   data_split("E:\\v-lxini\\data\\TREC\\", "train.xml", 8);
-  KVStore kv("dist_async");
-  if (kv.GetRole() != "worker")
-  {
-    kv.RunServer();
-    return 0;
-  }
   */
   //testconv();
-  local_run(argc, argv);
+  if (argc == 4)
+    distributed_run(argc, argv);
+  else
+    local_run(argc, argv);
   //testpool();
   //testbackward();
-  getchar();
 }

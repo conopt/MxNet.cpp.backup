@@ -32,7 +32,6 @@ class DeepQA
 public:
   DeepQA(KVStore kv, const string& data_path, const string &embeddings_path) :
     kv_(move(kv)),
-    reader_(DataReader::Create(data_path, BATCH_SIZE)),
     word2vec_(embeddings_path),
 #ifdef MXNET_USE_CUDA
     context_(Context(DeviceType::kGPU, 0))
@@ -45,6 +44,17 @@ public:
     //(*opt).SetParam("momentum", 0.9)
     (*opt).SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers()));
     kv_.SetOptimizer(std::move(opt));
+
+#define GET_ENV(entry, def) do{if (buf = getenv(#entry)) entry = stoi(buf); else entry = (def);}while(false)
+    const char *buf;
+    GET_ENV(BATCH_SIZE, 50);
+    GET_ENV(NUM_FILTER, 100);
+    GET_ENV(FILTER_WIDTH, 5);
+    GET_ENV(OVERLAP_LENGTH, 5);
+    GET_ENV(SENTENCE_LENGTH, 70);
+    GET_ENV(NUM_EPOCH, 20);
+    reader_.reset(DataReader::Create(data_path, BATCH_SIZE));
+#undef GET_ENV
   }
       /*
       auto sim_weight = Symbol::Variable("sim_weight"); // NUM_FILTER * NUM_FILTER
@@ -194,19 +204,22 @@ public:
       if (reqtypes.count(argument_list[i]) >= 0)
         args_index.emplace(argument_list[i], i);
 
-    auto time_start = chrono::high_resolution_clock::now();
+    size_t time_used = 0;
     size_t processed = 0;
     auto t1 = chrono::high_resolution_clock::now();
 
     for (size_t epoch = 0; epoch < NUM_EPOCH; ++epoch)
     {
+      auto time_start = chrono::high_resolution_clock::now();
       if (train_mode)
       {
         reader_->Reset();
         size_t batch_count = 0;
         while (true)
         {
-          cerr << '.';
+          if (batch_count % 10 == 0)
+            cerr << endl << "Worker " << kv_.GetRank() << " Batch " << batch_count << endl;
+          //cerr << '.';
           ++batch_count;
           auto batch = reader_->ReadBatch();
           //LG << "Destruct in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
@@ -253,8 +266,8 @@ public:
           if (!init_kv)
           {
             kv_.Init(indices, exe->arg_arrays);
-            //kv_.Pull(indices, &exe->arg_arrays);
             init_kv = true;
+            kv_.Pull(indices, &exe->arg_arrays);
           }
           exe->Forward(true);
           exe->Backward();
@@ -316,21 +329,27 @@ public:
         result.SyncCopyFromCPU(predictions);
         //for (int i = 0; i < 10; ++i) cerr << predictions[i] << ' '; cerr << endl;
         //LG << "Validate in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) << " Samples/s: " <<
-          processed * 1000.0 / chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - time_start).count() << endl;
+        auto now = chrono::high_resolution_clock::now();
+        time_used += chrono::duration_cast<chrono::milliseconds>(now - time_start).count();
+        cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) <<
+                " Samples/s: " << processed * 1000.0 / time_used << endl;
       }
     }
-    cerr << "Training Ends";
+    cerr << "Worker " << kv_.GetRank() << " Training Ends" << endl;
+    kv_.Barrier();
+    cerr << "Worker " << kv_.GetRank() << " Entered Barrier" << endl;
+    cerr << "Worker " << kv_.GetRank()
+      << " Total Speed: " << processed * 1000.0 / time_used << endl;
   }
 
 private:
   static const bool USE_SOFTMAX = true;
-  static const mx_uint BATCH_SIZE = 50;
-  static const mx_uint NUM_FILTER = 100;
-  static const mx_uint FILTER_WIDTH = 5;
-  static const mx_uint OVERLAP_LENGTH = 5;
-  static const mx_uint SENTENCE_LENGTH = 70;
-  static const mx_uint NUM_EPOCH = 10;
+  mx_uint BATCH_SIZE;
+  mx_uint NUM_FILTER;
+  mx_uint FILTER_WIDTH;
+  mx_uint OVERLAP_LENGTH;
+  mx_uint SENTENCE_LENGTH;
+  mx_uint NUM_EPOCH;
   unique_ptr<DataReader> reader_;
   Embeddings word2vec_;
   Context context_;
