@@ -8,15 +8,33 @@
 #include <chrono>
 #include <random>
 #include "MxNetCpp.h"
+#include "dmlc/io.h"
 
 class Embeddings
 {
   public:
     Embeddings(const std::string &path)
     {
-      std::ifstream fin(path, std::ios::binary);
+      std::unique_ptr<dmlc::SeekStream> fin(dmlc::SeekStream::CreateForRead(path.c_str()));
+      //std::ifstream fin(path, std::ios::binary);
       size_t rows, cols;
-      fin >> rows >> cols;
+      char ch = 'a';
+      std::string tmp;
+      while (ch != ' ')
+      {
+        fin->Read(&ch, 1);
+        tmp += ch;
+      }
+      rows = std::stoi(tmp);
+      tmp.clear();
+      while (ch != '\n')
+      {
+        fin->Read(&ch, 1);
+        tmp += ch;
+      }
+      cols = std::stoi(tmp);
+      tmp.clear();
+
       cols_ = cols;
       std::cerr << "Total rows: " << rows << std::endl;
       zero_ = std::vector<float>(cols, 0.0f);
@@ -34,16 +52,21 @@ class Embeddings
       std::string word;
 
       auto start = std::chrono::steady_clock::now();
-      while (!fin.eof())
+      for (size_t i = 0; i < rows; ++i)
       {
-        fin >> word;
-        char space;
-        fin.get(space); // Eat space
-        fin.read(row_buffer.get(), ROW_SIZE); // Extract vec
+        while (true)
+        {
+          fin->Read(&ch, 1);
+          if (ch == ' ')
+            break;
+          word += ch;
+        }
+        fin->Read(row_buffer.get(), ROW_SIZE); // Extract vec
         const float *vec = reinterpret_cast<const float*>(row_buffer.get());
         dict_.emplace(std::piecewise_construct,
           std::forward_as_tuple(word),
           std::forward_as_tuple(vec, vec + cols));
+        word.clear();
       }
       auto end = std::chrono::steady_clock::now();
       std::cerr << "Read embeedings in " <<
