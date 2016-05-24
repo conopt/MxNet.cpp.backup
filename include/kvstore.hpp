@@ -157,6 +157,10 @@ int KVStore::GetNumWorkers() const {
   return num_workers;
 }
 
+void KVStore::Barrier() const {
+  CHECK_EQ(MXKVStoreBarrier(handle_), 0);
+}
+
 std::string KVStore::GetRole() const {
   int ret;
   CHECK_EQ(MXKVStoreIsSchedulerNode(&ret), 0);

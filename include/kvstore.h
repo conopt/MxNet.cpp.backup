@@ -34,6 +34,7 @@ class KVStore {
   inline std::string GetType() const;
   inline int GetRank() const;
   inline int GetNumWorkers() const;
+  inline void Barrier() const;
   inline std::string GetRole() const;
   ~KVStore() { MXKVStoreFree(handle_); }
 
