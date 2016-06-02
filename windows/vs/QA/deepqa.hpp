@@ -30,20 +30,26 @@ Symbol Multiply(const string& name, Symbol data, Symbol weight,
 class DeepQA
 {
 public:
-  DeepQA(KVStore kv, const string& data_path, const string &embeddings_path) :
-    kv_(move(kv)),
-    word2vec_(embeddings_path),
+  DeepQA(const string& kv_mode, const string& data_path, const string &embeddings_path) :
+    kv_(kv_mode),
 #ifdef MXNET_USE_CUDA
     context_(Context(DeviceType::kGPU, 0))
 #else
     context_(Context(DeviceType::kCPU, 0))
 #endif
   {
-    std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.1, 0));
-    //(*opt).SetParam("rho", 0.95).SetParam("eps", 1e-6);
-    //(*opt).SetParam("momentum", 0.9)
-    (*opt).SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers()));
-    kv_.SetOptimizer(std::move(opt));
+#ifdef USE_CHANA
+    if (kv_.GetType() != "local")
+      kv_.RunServer();
+#endif
+    if (kv_.GetRank() == 0)
+    {
+      std::unique_ptr<Optimizer> opt(new Optimizer("adadelta", 0.1, 0));
+      //(*opt).SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers()));
+      kv_.SetOptimizer(std::move(opt));
+    }
+    word2vec_.init(embeddings_path);
+    kv_.Barrier();
 
 #define GET_ENV(entry, def) do{if (buf = getenv(#entry)) entry = stoi(buf); else entry = (def);}while(false)
     const char *buf;
@@ -53,8 +59,17 @@ public:
     GET_ENV(OVERLAP_LENGTH, 5);
     GET_ENV(SENTENCE_LENGTH, 70);
     GET_ENV(NUM_EPOCH, 20);
-    reader_.reset(DataReader::Create(data_path, BATCH_SIZE));
 #undef GET_ENV
+    if (getenv("LOCAL"))
+    {
+      std::cerr << "Local: " << data_path << std::endl;
+      reader_.reset(DataReader::Create(data_path, BATCH_SIZE));
+    }
+    else
+    {
+      string suffix = ".part" + to_string(kv_.GetRank()) + ".tsv";
+      reader_.reset(DataReader::Create(data_path + suffix, BATCH_SIZE));
+    }
   }
       /*
       auto sim_weight = Symbol::Variable("sim_weight"); // NUM_FILTER * NUM_FILTER
@@ -198,11 +213,17 @@ public:
     reqtypes[a_overlap_input.name()] = OpReqType::kNullOp;
     reqtypes[labels.name()] = OpReqType::kNullOp;
 
-    map<string, int> args_index;
+    vector<int> grad_indices;
     auto argument_list = output.ListArguments();
+    for (const auto &arg_name : argument_list)
+      if (arg_name.substr(arg_name.length() - 3) == "pad")
+        reqtypes[arg_name] = OpReqType::kNullOp;
+
     for (size_t i = 0; i < argument_list.size(); ++i)
-      if (reqtypes.count(argument_list[i]) >= 0)
-        args_index.emplace(argument_list[i], i);
+      if (reqtypes.count(argument_list[i]) == 0)
+        grad_indices.push_back(i);
+    for (auto x : grad_indices)
+      cerr << x << argument_list[x] << endl;
 
     size_t time_used = 0;
     size_t processed = 0;
@@ -211,6 +232,7 @@ public:
     for (size_t epoch = 0; epoch < NUM_EPOCH; ++epoch)
     {
       auto time_start = chrono::high_resolution_clock::now();
+      size_t batch_processed = 0;
       if (train_mode)
       {
         reader_->Reset();
@@ -218,7 +240,12 @@ public:
         while (true)
         {
           if (batch_count % 10 == 0)
-            cerr << endl << "Worker " << kv_.GetRank() << " Batch " << batch_count << endl;
+          {
+            auto now = chrono::high_resolution_clock::now();
+            auto batch_time = chrono::duration_cast<chrono::milliseconds>(now - time_start).count();
+            cerr << "Worker " << kv_.GetRank() << " Batch " << batch_count <<
+                " Samples/s: " << batch_processed * 1000.0 / batch_time << endl;
+          }
           //cerr << '.';
           ++batch_count;
           auto batch = reader_->ReadBatch();
@@ -228,6 +255,7 @@ public:
           if (batch.size() != BATCH_SIZE)
             break;
           processed += BATCH_SIZE;
+          batch_processed += BATCH_SIZE;
           t1 = chrono::high_resolution_clock::now();
           questions.clear(); answers.clear(); q_overlap.clear(); a_overlap.clear(); ratings.clear();
           //LG << "clear last vector in " << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
@@ -261,47 +289,27 @@ public:
           args[labels.name()] = r_array;
 
           unique_ptr<Executor> exe(output.SimpleBind(context_, args, {}));//, reqtypes));
-          vector<int> indices(exe->arg_arrays.size());
-          iota(indices.begin(), indices.end(), 0);
           if (!init_kv)
           {
-            kv_.Init(indices, exe->arg_arrays);
+            for (const auto& index : grad_indices)
+              kv_.Init(index, exe->arg_arrays[index]);
             init_kv = true;
-            kv_.Pull(indices, &exe->arg_arrays);
+            for (const auto& index : grad_indices)
+              kv_.Pull(index, &exe->arg_arrays[index]);
           }
           exe->Forward(true);
           exe->Backward();
-          /*
-          for (const auto& pair : args_index)
-          {
-            cerr << pair.first << ":";
-            cerr << " [0] " << exe->grad_arrays[pair.second].GetData()[0];
-            cerr << ", [1] " << exe->grad_arrays[pair.second].GetData()[1];
-            cerr << endl;
-          }
-          getchar();
-          */
-          kv_.Push(indices, exe->grad_arrays);
-          if (false)
-          {
-            for (const auto& params : args)
-            {
-              const mx_float *data = params.second.GetData();
-              auto shape = params.second.GetShape();
-              size_t length = accumulate(shape.begin(), shape.end(), 1, [](size_t a, size_t b) {
-                return a*b;
-              });
-              //cerr << params.first << "=" << data[0] << endl;
-              cerr << params.first << "=" << accumulate(data, data + length, 0.0f) << endl;
-            }
-            cerr << "----------------------------------------" << endl;
-          }
-          kv_.Pull(indices, &exe->arg_arrays);
+          for (const auto& index : grad_indices)
+            kv_.Push(index, exe->grad_arrays[index]);
+          for (const auto& index : grad_indices)
+            kv_.Pull(index, &exe->arg_arrays[index]);
           //LG << "ff bp in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
           t1 = chrono::high_resolution_clock::now();
         }
         cerr << endl << batch_count << " batches" << endl;
       }
+      auto now = chrono::high_resolution_clock::now();
+      time_used += chrono::duration_cast<chrono::milliseconds>(now - time_start).count();
       // Validation
       if (q_array_v.size() > 0)
       {
@@ -329,10 +337,7 @@ public:
         result.SyncCopyFromCPU(predictions);
         //for (int i = 0; i < 10; ++i) cerr << predictions[i] << ' '; cerr << endl;
         //LG << "Validate in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        auto now = chrono::high_resolution_clock::now();
-        time_used += chrono::duration_cast<chrono::milliseconds>(now - time_start).count();
-        cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) <<
-                " Samples/s: " << processed * 1000.0 / time_used << endl;
+        cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) << endl;
       }
     }
     cerr << "Worker " << kv_.GetRank() << " Training Ends" << endl;
@@ -446,7 +451,7 @@ private:
     auto lr = Multiply("lr", hidden_layer, lr_weight, lr_bias,
         join_length, join_length, 1 + USE_SOFTMAX);
     if (USE_SOFTMAX)
-      return SoftmaxOutput("softmax", lr, labels);// , 1.0f, -1.0f, true);
+      return SoftmaxOutput("softmax", lr, labels, 1.0f/BATCH_SIZE);// , 1.0f, -1.0f, true);
     return LogisticRegressionOutput("sigmoid", lr, labels);
   }
 

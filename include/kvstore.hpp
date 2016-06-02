@@ -45,7 +45,7 @@ namespace private_ {
       for (const auto& pair : params) {
         opt->SetParam(pair.first, pair.second);
       }
-      kvstore->SetOptimizer(std::move(opt));
+      kvstore->SetOptimizer(std::move(opt), true);
     }
   }
 }  // namespace private_
@@ -61,7 +61,9 @@ KVStore::KVStore(KVStore &&kv) {
 }
 
 void KVStore::RunServer() {
+#ifndef USE_CHANA
   CHECK_NE(GetRole(), "worker");
+#endif
   private_::kvstore = this;
   CHECK_EQ(MXKVStoreRunServer(handle_, &private_::controller), 0);
 }
@@ -129,12 +131,15 @@ namespace private_ {
   }
 }
 
-void KVStore::SetOptimizer(std::unique_ptr<Optimizer> optimizer) {
-  if (GetType().substr(0, 4) == "dist" && GetRole() == "worker") {
-    CHECK_EQ(MXKVStoreSendCommmandToServers(handle_, 0, (*optimizer).Serialize().c_str()), 0);
-  } else {
+void KVStore::SetOptimizer(std::unique_ptr<Optimizer> optimizer, bool local) {
+#ifndef USE_CHANA
+  local = GetType().substr(0, 4) != "dist" || GetRole() != "worker";
+#endif
+  if (local) {
     optimizer_ = std::move(optimizer);
     CHECK_EQ(MXKVStoreSetUpdater(handle_, &private_::updater, optimizer_.get()), 0);
+  } else {
+    CHECK_EQ(MXKVStoreSendCommmandToServers(handle_, 0, (*optimizer).Serialize().c_str()), 0);
   }
 }
 

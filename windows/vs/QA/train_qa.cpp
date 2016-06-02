@@ -96,8 +96,9 @@ void testconv()
 
 void local_run(int argc, char *argv[])
 {
-  KVStore kv;
-  DeepQA deepqa(std::move(kv), argv[1], argv[2]);
+  const char *kv_env = getenv("KV_MODE");
+  string kv_mode = kv_env == nullptr ? "local" : kv_env;
+  DeepQA deepqa(kv_mode, argv[1], argv[2]);
   //deepqa.run(argv[3] , "E:\\v-lxini\\data\\1st_weights\\");
   deepqa.run(argv[3]);
 }
@@ -109,20 +110,15 @@ void distributed_run(int argc, char*argv[])
   string kv_mode = kv_env == nullptr ? "dist_async#worker_machine_list#1" : kv_env;
 #else
   string kv_mode = kv_env == nullptr ? "dist_async" : kv_env;
-#endif
-  KVStore kv(kv_mode);
-#ifdef USE_CHANA
-    kv.RunServer();
-#else
-  if (kv.GetRole() != "worker")
+  const char *kv_role = getenv("DMLC_ROLE");
+  if (kv_role != string("worker"))
   {
+    KVStore kv(kv_mode);
     kv.RunServer();
     return;
   }
 #endif
-  int rank = kv.GetRank();
-  string suffix = ".part" + to_string(rank) + ".tsv";
-  DeepQA deepqa(std::move(kv), argv[1] + suffix, argv[2]);
+  DeepQA deepqa(kv_mode, argv[1], argv[2]);
   deepqa.run(argv[3]);
 }
 

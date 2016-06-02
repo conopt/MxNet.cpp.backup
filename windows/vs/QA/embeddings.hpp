@@ -13,7 +13,8 @@
 class Embeddings
 {
   public:
-    Embeddings(const std::string &path)
+    Embeddings() {}
+    void init(const std::string &path)
     {
       std::unique_ptr<dmlc::SeekStream> fin(dmlc::SeekStream::CreateForRead(path.c_str()));
       //std::ifstream fin(path, std::ios::binary);
