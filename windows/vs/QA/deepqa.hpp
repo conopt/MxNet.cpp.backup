@@ -44,7 +44,7 @@ public:
 #endif
     if (kv_.GetRank() == 0)
     {
-      std::unique_ptr<Optimizer> opt(new Optimizer("adadelta", 0.1, 0));
+      std::unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.1, 0));
       //(*opt).SetParam("rescale_grad", 1.0 / (kv_.GetNumWorkers()));
       kv_.SetOptimizer(std::move(opt));
     }
@@ -220,7 +220,7 @@ public:
         reqtypes[arg_name] = OpReqType::kNullOp;
 
     for (size_t i = 0; i < argument_list.size(); ++i)
-      if (reqtypes.count(argument_list[i]) == 0)
+      if (reqtypes.count(argument_list[i]) >= 0)
         grad_indices.push_back(i);
     for (auto x : grad_indices)
       cerr << x << argument_list[x] << endl;
@@ -306,10 +306,8 @@ public:
           //LG << "ff bp in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
           t1 = chrono::high_resolution_clock::now();
         }
-        cerr << endl << batch_count << " batches" << endl;
+        cerr << batch_count << " batches" << endl;
       }
-      auto now = chrono::high_resolution_clock::now();
-      time_used += chrono::duration_cast<chrono::milliseconds>(now - time_start).count();
       // Validation
       if (q_array_v.size() > 0)
       {
@@ -328,8 +326,8 @@ public:
           exe->outputs[0].WaitToRead();
           exe->outputs[0].SyncCopyToCPU(buffer.data(), buffer.size());
           if (USE_SOFTMAX)
-		        for (size_t j = 0; j < BATCH_SIZE*2; j += 2)
-			        predictions.push_back(buffer[j + 1]);
+            for (size_t j = 0; j < BATCH_SIZE*2; j += 2)
+              predictions.push_back(buffer[j + 1]);
           else
             predictions.insert(predictions.end(), buffer.begin(), buffer.begin() + BATCH_SIZE);
         }
@@ -337,8 +335,11 @@ public:
         result.SyncCopyFromCPU(predictions);
         //for (int i = 0; i < 10; ++i) cerr << predictions[i] << ' '; cerr << endl;
         //LG << "Validate in" << chrono::duration_cast<chrono::milliseconds>(chrono::high_resolution_clock::now() - t1).count() / 1000.0 << "s";
-        cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge) << endl;
+        cerr << "Epoch " << epoch << ", Dev Auc: " << auc(result, r_array_v_merge)
+          << ", Loss: " << cross_entropy(result, r_array_v_merge) << endl;
       }
+      auto now = chrono::high_resolution_clock::now();
+      time_used += chrono::duration_cast<chrono::milliseconds>(now - time_start).count();
     }
     cerr << "Worker " << kv_.GetRank() << " Training Ends" << endl;
     kv_.Barrier();
@@ -384,7 +385,7 @@ private:
     }
     else
     {
-      input_overlap = Concat(prefix + "_concat", { input, overlap }, 2, 3);
+input_overlap = Concat(prefix + "_concat", { input, overlap }, 2, 3);
     }
 
     auto weight = Symbol::Variable(prefix + "_weight");
@@ -403,10 +404,10 @@ private:
 
     auto conv = Convolution(prefix + "_conv", input_overlap, weight, bias,
       Shape(FILTER_WIDTH, word2vec_.length() + OVERLAP_LENGTH), NUM_FILTER);
-      //Shape(1, 1), Shape(1, 1), Shape(0, 0), 1, 512, true);
+    //Shape(1, 1), Shape(1, 1), Shape(0, 0), 1, 512, true);
     // Output Shape (with padding): batch, 1, l+w-1, 1
     //           (without padding): batch, 1, l-w+1, 1
-    size_t output_length = SENTENCE_LENGTH + (padding?1:-1)*(FILTER_WIDTH - 1);
+    size_t output_length = SENTENCE_LENGTH + (padding ? 1 : -1)*(FILTER_WIDTH - 1);
     auto act = Activation(prefix + "_activation", conv, ActivationType);
     auto pooling = Pooling(prefix + "_pooling", act,
       Shape(output_length, 1), PoolType);
@@ -414,7 +415,7 @@ private:
   }
 
   Symbol ClassificationLayer(Symbol q_input, Symbol a_input, Symbol labels,
-      ActivationActType ActivationType, map<string, NDArray>& args)
+    ActivationActType ActivationType, map<string, NDArray>& args)
   {
     const mx_uint join_length = NUM_FILTER * 2;
     auto join_layer = Concat("q_sim_a", { q_input, a_input }, 2, 1);
@@ -432,9 +433,9 @@ private:
     args.emplace(hidden_bias.name(), hidden_bias_array);
 
     auto hidden_layer = Activation("hidden_layer_act",
-        Multiply("hidden_layer", join_layer, hidden_weight, hidden_bias,
-            BATCH_SIZE, join_length, join_length),
-        ActivationType);
+      Multiply("hidden_layer", join_layer, hidden_weight, hidden_bias,
+      BATCH_SIZE, join_length, join_length),
+      ActivationType);
 
     auto lr_weight = Symbol::Variable("lr_weight");
     NDArray lr_weight_array(Shape(join_length, 1 + USE_SOFTMAX), context_);
@@ -449,15 +450,15 @@ private:
     args.emplace(lr_bias.name(), lr_bias_array);
 
     auto lr = Multiply("lr", hidden_layer, lr_weight, lr_bias,
-        join_length, join_length, 1 + USE_SOFTMAX);
+      join_length, join_length, 1 + USE_SOFTMAX);
     if (USE_SOFTMAX)
-      return SoftmaxOutput("softmax", lr, labels, 1.0f/BATCH_SIZE);// , 1.0f, -1.0f, true);
+      return SoftmaxOutput("softmax", lr, labels, 1.0f / BATCH_SIZE);// , 1.0f, -1.0f, true);
     return LogisticRegressionOutput("sigmoid", lr, labels);
   }
 
   NDArray oe_;
   Symbol OverlapEmbeddingLayer(string prefix, Symbol overlap,
-      map<string, NDArray>& args)
+    map<string, NDArray>& args)
   {
     Symbol embedding(prefix + "_overlap_embedding");
     /*
@@ -478,9 +479,27 @@ private:
     args.emplace(embedding.name(), oe_);
 
     return Reshape(prefix + "_overlap_emb_reshape",
-        Multiply(prefix + "_overlap_emb", overlap, embedding,
-            BATCH_SIZE * SENTENCE_LENGTH * 3, 3, OVERLAP_LENGTH),
-        Shape(BATCH_SIZE, 1, SENTENCE_LENGTH, OVERLAP_LENGTH));
+      Multiply(prefix + "_overlap_emb", overlap, embedding,
+      BATCH_SIZE * SENTENCE_LENGTH * 3, 3, OVERLAP_LENGTH),
+      Shape(BATCH_SIZE, 1, SENTENCE_LENGTH, OVERLAP_LENGTH));
+  }
+
+  mx_float cross_entropy(NDArray results, NDArray labels)
+  {
+    results.WaitToRead();
+    const int n = labels.GetShape()[0];
+    vector<mx_float> result_data(n), label_data(n);
+    results.SyncCopyToCPU(result_data.data(), result_data.size());
+    labels.SyncCopyToCPU(label_data.data(), label_data.size());
+    mx_float sum = 0;
+    for (int i = 0; i < n; ++i)
+    {
+      mx_float p = result_data[i];
+      if (label_data[i] < 0.5)
+        p = 1 - p;
+      sum += std::log(p);
+    }
+    return -sum / n;
   }
 
   mx_float auc(NDArray results, NDArray labels)
