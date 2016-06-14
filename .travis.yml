@@ -4,13 +4,12 @@ language: cpp
 
 os:
   - linux
-  - osx
 
 env:
   # code analysis
   - TASK=lint
   # TODO: build example
-  - TASK=build
+  # TASK=build
 
 # dependent apt packages
 addons:
