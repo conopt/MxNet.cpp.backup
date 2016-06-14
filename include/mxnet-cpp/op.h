@@ -1,3 +1,4 @@
+// NO LINT
 /*!
 *  Copyright (c) 2016 by Contributors
 * \file op.h
