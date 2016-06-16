@@ -18,6 +18,7 @@ namespace cpp {
 class KVStore {
  public:
   explicit inline KVStore(const std::string& name = "local");
+  inline KVStore(bool async, const std::string& machine_list_path, int server_count = 1);
   KVStore(const KVStore &) = delete;
   // VS 2013 doesn't support default move constructor.
   KVStore(KVStore &&);

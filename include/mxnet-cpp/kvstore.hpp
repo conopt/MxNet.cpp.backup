@@ -54,6 +54,13 @@ KVStore::KVStore(const std::string& name) {
   CHECK_EQ(MXKVStoreCreate(name.c_str(), &handle_), 0);
 }
 
+KVStore::KVStore(bool async, const std::string& machine_list_path, int server_count)
+  std::string name = async ? "dist_async" : "dist_sync";
+  name += "#" + machine_list_path;
+  name += "#" + std::to_string(server_count);
+  CHECK_EQ(MXKVStoreCreate(name.c_str(), &handle_), 0);
+}
+
 KVStore::KVStore(KVStore &&kv) {
   optimizer_ = std::move(kv.optimizer_);
   handle_ = kv.handle_;
@@ -61,7 +68,6 @@ KVStore::KVStore(KVStore &&kv) {
 }
 
 void KVStore::RunServer() {
-  CHECK_NE(GetRole(), "worker");
   private_::kvstore = this;
   CHECK_EQ(MXKVStoreRunServer(handle_, &private_::controller, 0), 0);
 }
