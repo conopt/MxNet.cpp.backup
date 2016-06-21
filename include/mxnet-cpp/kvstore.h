@@ -30,6 +30,7 @@ class KVStore {
       const std::vector<NDArray>& vals, int priority = 0);
   inline void Pull(int key, NDArray* out, int priority = 0);
   inline void Pull(const std::vector<int>& keys, std::vector<NDArray>* outs, int priority = 0);
+  inline void AllReduce(std::vector<NDArray>* vals);
   // TODO(lx): put lr in optimizer or not?
   inline void SetOptimizer(std::unique_ptr<Optimizer> optimizer, bool local = false);
   inline std::string GetType() const;
