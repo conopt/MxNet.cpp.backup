@@ -102,44 +102,44 @@ struct SkipThoughtsVector
   // q,a should be one-hot
   // can also change Wemb to pre-embedded inputs (qemb, aemb)
   SkipThoughtsVector(Symbol q, Symbol a, Symbol Wemb,
-    mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
+    mx_uint batch_size, mx_uint q_len, mx_uint a_len, mx_uint emb_dim, mx_uint vocab_size,
     std::map<std::string, Symbol>& params, bool bid)
   {
-    auto qemb = Reshape(dot(Reshape(q, Shape(batch_size*len, vocab_size)), Wemb),
-      Shape(batch_size, len, emb_dim));
-    auto aemb = Reshape(dot(Reshape(a, Shape(batch_size*len, vocab_size)), Wemb),
-      Shape(batch_size, len, emb_dim));
-    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params, bid);
+    auto qemb = Reshape(dot(Reshape(q, Shape(batch_size*q_len, vocab_size)), Wemb),
+      Shape(batch_size, q_len, emb_dim));
+    auto aemb = Reshape(dot(Reshape(a, Shape(batch_size*a_len, vocab_size)), Wemb),
+      Shape(batch_size, a_len, emb_dim));
+    Init(q, a, qemb, aemb, batch_size, q_len, a_len, emb_dim, vocab_size, params, bid);
   }
 
   // q,a should be one-hot
   SkipThoughtsVector(Symbol q, Symbol a, Symbol qemb, Symbol aemb,
-    mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
+    mx_uint batch_size, mx_uint q_len, mx_uint a_len, mx_uint emb_dim, mx_uint vocab_size,
     std::map<std::string, Symbol>& params, bool bid)
   {
-    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params, bid);
+    Init(q, a, qemb, aemb, batch_size, q_len, a_len, emb_dim, vocab_size, params, bid);
   }
 
   void Init(Symbol q, Symbol a, Symbol qemb, Symbol aemb,
-    mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
+    mx_uint batch_size, mx_uint q_len, mx_uint a_len, mx_uint emb_dim, mx_uint vocab_size,
     std::map<std::string, Symbol>& params, bool bid)
   {
     Symbol encoded;
     if (bid)
     {
       // Bidirectional
-      UniSkip encoder_for(qemb, len, params);
-      UniSkip encoder_back(qemb, len, params, true);
+      UniSkip encoder_for(qemb, q_len, params);
+      UniSkip encoder_back(qemb, q_len, params, true);
       encoded = Concat({ encoder_for.states.back(), encoder_back.states.back() }, 2, 1);
       emb_dim *= 2;
     }
     else
     {
-      UniSkip encoder(qemb, len, params);
+      UniSkip encoder(qemb, q_len, params);
       encoded = encoder.states.back();
     }
 
-    Decoder decode_ans(aemb, encoded, len, params);
+    Decoder decode_ans(aemb, encoded, a_len, params);
 
     Symbol V = params["V"];
     //Symbol b = params["b"];
@@ -148,11 +148,11 @@ struct SkipThoughtsVector
       return Reshape(in, Shape(batch_size, 1, emb_dim));
     };
     std::vector<Symbol> tmp;
-    Shape dist_shape(batch_size*len, vocab_size);
+    Shape dist_shape(batch_size*a_len, vocab_size);
 
     std::transform(decode_ans.states.begin(), decode_ans.states.end(),
       inserter(tmp, tmp.end()), expand);
-    auto ans_h = Reshape(Concat(tmp, tmp.size(), 1), Shape(batch_size*len, emb_dim));
+    auto ans_h = Reshape(Concat(tmp, tmp.size(), 1), Shape(batch_size*a_len, emb_dim));
     //auto left_dist = SoftmaxActivation(dot(left_h, V) + b);
     auto ans_dist = SoftmaxActivation(dot(ans_h, V));
     auto ans_prob = Reshape(a, dist_shape) * ans_dist;

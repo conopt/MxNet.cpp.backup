@@ -15,14 +15,16 @@ vector<float> seq2onehot(const vector<float> &seq, mx_uint vocab_size)
   return move(onehot);
 }
 
-int EMB_DIM = 1000;
-int VOCAB_SIZE = 3000;
+int EMB_DIM = 200;
+int VOCAB_SIZE = 20000;
 int BATCH_SIZE = 1;
-int SEQ_LEN = 5; // Varies for different batch
 Context context(DeviceType::kCPU, 0);
 bool BIDIRECTIONAL = true;
 
-// argv[1]: data path
+// argv[1]: query id path
+// argv[2]: query emb path
+// argv[3]: answer id path
+// argv[4]: answer emb path
 int main(int argc, char *argv[])
 {
   const vector<string> param_names{
@@ -41,22 +43,55 @@ int main(int argc, char *argv[])
   map<string, OpReqType> reqs;
 
   // Fake data
-  vector<float> q{0,1,2,3,4};
-  vector<float> a{0,4,3,2,1};
+  vector<float> q, a;
+  ifstream fin(argv[1]);
+  while (fin.peek() != '\n')
+  {
+    int id;
+    fin >> id;
+    q.push_back(id);
+  }
+  fin = ifstream(argv[3]);
+  while (fin.peek() != '\n')
+  {
+    int id;
+    fin >> id;
+    a.push_back(id);
+  }
 
   // q, a, are one-hot representations of the input sentences
-  args["q"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["q"] = NDArray(Shape(BATCH_SIZE, q.size(), VOCAB_SIZE), context, false);
   args["q"].SyncCopyFromCPU(seq2onehot(q, VOCAB_SIZE));
   reqs["q"] = OpReqType::kNullOp;
 
-  args["a"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["a"] = NDArray(Shape(BATCH_SIZE, a.size(), VOCAB_SIZE), context, false);
   args["a"].SyncCopyFromCPU(seq2onehot(a, VOCAB_SIZE));
   reqs["a"] = OpReqType::kNullOp;
 
+  fin = ifstream(argv[2]);
+  fin >> EMB_DIM;
+  vector<float> emb;
+  emb.resize(EMB_DIM * q.size());
+  fin.read((char*)emb.data(), emb.size() * sizeof(float));
+  args["qemb"] = NDArray(Shape(BATCH_SIZE, q.size(), EMB_DIM), context, false);
+  args["qemb"].SyncCopyFromCPU(emb);
+  reqs["qemb"] = OpReqType::kNullOp;
+
+  fin = ifstream(argv[4]);
+  fin >> EMB_DIM;
+  CHECK_EQ(EMB_DIM, emb.size()/q.size());
+  emb.resize(EMB_DIM * a.size());
+  fin.read((char*)emb.data(), emb.size() * sizeof(float));
+  args["aemb"] = NDArray(Shape(BATCH_SIZE, a.size(), EMB_DIM), context, false);
+  args["aemb"].SyncCopyFromCPU(emb);
+  reqs["aemb"] = OpReqType::kNullOp;
+
   // embedding, ith row is the embedding of ith word in vocabulary
+  /*
   args["Wemb"] = NDArray(Shape(VOCAB_SIZE, EMB_DIM), context);
   NDArray::SampleGaussian(0, 1, &args["Wemb"]);
   reqs["Wemb"] = OpReqType::kNullOp;
+  */
 
   // Initialize params to be trained.
   for (const auto& name : param_names)
@@ -82,7 +117,8 @@ int main(int argc, char *argv[])
     NDArray::SampleGaussian(0, 1, &args[name]);
 
   // Build model and train
-  SkipThoughtsVector model("q", "a", "Wemb", BATCH_SIZE, SEQ_LEN, EMB_DIM, VOCAB_SIZE, params, BIDIRECTIONAL);
+  SkipThoughtsVector model("q", "a", "qemb", "aemb",
+    BATCH_SIZE, q.size(), a.size(), EMB_DIM, VOCAB_SIZE, params, BIDIRECTIONAL);
 
   vector<int> indices;
   {
