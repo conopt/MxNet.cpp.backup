@@ -21,12 +21,62 @@ int BATCH_SIZE = 1;
 Context context(DeviceType::kCPU, 0);
 bool BIDIRECTIONAL = true;
 
+ifstream qin, qembin, ain, aembin;
+
+pair<mx_uint, mx_uint> parse_input(map<string, NDArray>& args)
+{
+  char dum;
+  vector<float> q, a;
+  while (qin.peek() != '\n')
+  {
+    int id;
+    qin >> id;
+    q.push_back(id);
+  }
+  qin.read(&dum, 1);
+  while (ain.peek() != '\n')
+  {
+    int id;
+    ain >> id;
+    a.push_back(id);
+  }
+  ain.read(&dum, 1);
+
+  // q, a, are one-hot representations of the input sentences
+  args["q"] = NDArray(Shape(BATCH_SIZE, q.size(), VOCAB_SIZE), context, false);
+  args["q"].SyncCopyFromCPU(seq2onehot(q, VOCAB_SIZE));
+
+  args["a"] = NDArray(Shape(BATCH_SIZE, a.size(), VOCAB_SIZE), context, false);
+  args["a"].SyncCopyFromCPU(seq2onehot(a, VOCAB_SIZE));
+
+  vector<float> emb;
+  emb.resize(EMB_DIM * q.size());
+  qembin.read((char*)emb.data(), emb.size() * sizeof(float));
+  args["qemb"] = NDArray(Shape(BATCH_SIZE, q.size(), EMB_DIM), context, false);
+  args["qemb"].SyncCopyFromCPU(emb);
+
+  emb.resize(EMB_DIM * a.size());
+  aembin.read((char*)emb.data(), emb.size() * sizeof(float));
+  args["aemb"] = NDArray(Shape(BATCH_SIZE, a.size(), EMB_DIM), context, false);
+  args["aemb"].SyncCopyFromCPU(emb);
+
+  return make_pair(q.size(), a.size());
+}
+
 // argv[1]: query id path
 // argv[2]: query emb path
 // argv[3]: answer id path
 // argv[4]: answer emb path
 int main(int argc, char *argv[])
 {
+  qin = ifstream(argv[1]);
+  qembin = ifstream(argv[2], ios::binary);
+  ain = ifstream(argv[3]);
+  aembin = ifstream(argv[4], ios::binary);
+
+  qembin >> EMB_DIM;
+  aembin >> EMB_DIM;
+
   const vector<string> param_names{
     "Wr", "Ur", "Wrd", "Urd", "Crd",
     "Wz", "Uz", "Wzd", "Uzd", "Czd",
@@ -41,57 +91,10 @@ int main(int argc, char *argv[])
 
   map<string, NDArray> args;
   map<string, OpReqType> reqs;
-
-  // Fake data
-  vector<float> q, a;
-  ifstream fin(argv[1]);
-  while (fin.peek() != '\n')
-  {
-    int id;
-    fin >> id;
-    q.push_back(id);
-  }
-  fin = ifstream(argv[3]);
-  while (fin.peek() != '\n')
-  {
-    int id;
-    fin >> id;
-    a.push_back(id);
-  }
-
-  // q, a, are one-hot representations of the input sentences
-  args["q"] = NDArray(Shape(BATCH_SIZE, q.size(), VOCAB_SIZE), context, false);
-  args["q"].SyncCopyFromCPU(seq2onehot(q, VOCAB_SIZE));
   reqs["q"] = OpReqType::kNullOp;
-
-  args["a"] = NDArray(Shape(BATCH_SIZE, a.size(), VOCAB_SIZE), context, false);
-  args["a"].SyncCopyFromCPU(seq2onehot(a, VOCAB_SIZE));
   reqs["a"] = OpReqType::kNullOp;
-
-  fin = ifstream(argv[2]);
-  fin >> EMB_DIM;
-  vector<float> emb;
-  emb.resize(EMB_DIM * q.size());
-  fin.read((char*)emb.data(), emb.size() * sizeof(float));
-  args["qemb"] = NDArray(Shape(BATCH_SIZE, q.size(), EMB_DIM), context, false);
-  args["qemb"].SyncCopyFromCPU(emb);
   reqs["qemb"] = OpReqType::kNullOp;
-
-  fin = ifstream(argv[4]);
-  fin >> EMB_DIM;
-  CHECK_EQ(EMB_DIM, emb.size()/q.size());
-  emb.resize(EMB_DIM * a.size());
-  fin.read((char*)emb.data(), emb.size() * sizeof(float));
-  args["aemb"] = NDArray(Shape(BATCH_SIZE, a.size(), EMB_DIM), context, false);
-  args["aemb"].SyncCopyFromCPU(emb);
   reqs["aemb"] = OpReqType::kNullOp;
-
-  // embedding, ith row is the embedding of ith word in vocabulary
-  /*
-  args["Wemb"] = NDArray(Shape(VOCAB_SIZE, EMB_DIM), context);
-  NDArray::SampleGaussian(0, 1, &args["Wemb"]);
-  reqs["Wemb"] = OpReqType::kNullOp;
-  */
 
   // Initialize params to be trained.
   for (const auto& name : param_names)
@@ -116,25 +119,26 @@ int main(int argc, char *argv[])
   for (const auto& name : param_names)
     NDArray::SampleGaussian(0, 1, &args[name]);
 
-  // Build model and train
-  SkipThoughtsVector model("q", "a", "qemb", "aemb",
-    BATCH_SIZE, q.size(), a.size(), EMB_DIM, VOCAB_SIZE, params, BIDIRECTIONAL);
-
-  vector<int> indices;
-  {
-    auto arguments = model.loss.ListArguments();
-    for (int i = 0; i < arguments.size(); ++i)
-      if (reqs.count(arguments[i]) == 0)
-        indices.push_back(i);
-  }
-
-  auto* exe = model.loss.SimpleBind(context, args, {}, reqs);
   KVStore kv(true, "C:\\Data\\1ser.txt");
   kv.RunServer();
   unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.5, 0));
   kv.SetOptimizer(move(opt));
   for (int i = 0; i < 5; ++i)
   {
+    auto lens = parse_input(args);
+    // Build model and train
+    SkipThoughtsVector model("q", "a", "qemb", "aemb",
+      BATCH_SIZE, lens.first, lens.second, EMB_DIM, VOCAB_SIZE, params, BIDIRECTIONAL);
+
+    vector<int> indices;
+    {
+      auto arguments = model.loss.ListArguments();
+      for (int i = 0; i < arguments.size(); ++i)
+        if (reqs.count(arguments[i]) == 0)
+          indices.push_back(i);
+    }
+
+    auto* exe = model.loss.SimpleBind(context, args, {}, reqs);
     if (i == 0)
     {
       for (auto id : indices)
@@ -151,7 +155,7 @@ int main(int argc, char *argv[])
     exe->Backward();
     for (auto id : indices)
       kv.Push(id, exe->grad_arrays[id]);
+    delete exe;
   }
   kv.Barrier();
-  delete exe;
 }
