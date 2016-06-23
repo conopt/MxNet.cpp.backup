@@ -82,9 +82,11 @@ int main(int argc, char *argv[])
   }
 
   auto* exe = model.loss.SimpleBind(context, args, {}, reqs);
-  KVStore kv(true, "1ser.txt");
+  KVStore kv(true, "C:\\Data\\1ser.txt");
   kv.RunServer();
-  for (int i = 0; i < 100; ++i)
+  unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.5, 0));
+  kv.SetOptimizer(move(opt));
+  for (int i = 0; i < 5; ++i)
   {
     if (i == 0)
     {
@@ -97,6 +99,8 @@ int main(int argc, char *argv[])
         kv.Pull(id, &exe->arg_arrays[id]);
     }
     exe->Forward(true);
+    exe->outputs[0].WaitToRead();
+    cerr << exe->outputs[0].GetData()[0] << endl;
     exe->Backward();
     for (auto id : indices)
       kv.Push(id, exe->grad_arrays[id]);
