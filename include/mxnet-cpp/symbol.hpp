@@ -13,8 +13,10 @@
 #include <string>
 #include <vector>
 
-#include "logging.h"
-#include "symbol.h"
+#include "mxnet-cpp/logging.h"
+#include "mxnet-cpp/symbol.h"
+
+#include "mxnet-cpp/op_suppl.h"
 
 namespace mxnet {
 namespace cpp {
@@ -22,12 +24,38 @@ OpMap *Symbol::op_map_ = new OpMap();
 Symbol::Symbol(SymbolHandle handle) {
   blob_ptr_ = std::make_shared<SymBlob>(handle);
 }
-Symbol::Symbol(const std::string &name): name_(name) {
+Symbol::Symbol(const char *name) {
   SymbolHandle handle;
-  CHECK_EQ(MXSymbolCreateVariable(name.c_str(), &(handle)), 0);
+  CHECK_EQ(MXSymbolCreateVariable(name, &(handle)), 0);
   blob_ptr_ = std::make_shared<SymBlob>(handle);
 }
+Symbol::Symbol(const std::string &name) : Symbol(name.c_str()) {
+}
 Symbol Symbol::Variable(const std::string &name) { return Symbol(name); }
+Symbol Symbol::operator+(const Symbol &rhs) const {
+  return _Plus(*this, rhs);
+}
+Symbol Symbol::operator-(const Symbol &rhs) const {
+  return _Minus(*this, rhs);
+}
+Symbol Symbol::operator*(const Symbol &rhs) const {
+  return _Mul(*this, rhs);
+}
+Symbol Symbol::operator/(const Symbol &rhs) const {
+  return _Div(*this, rhs);
+}
+Symbol Symbol::operator+(mx_float scalar) const {
+  return _PlusScalar(*this, scalar);
+}
+Symbol Symbol::operator-(mx_float scalar) const {
+  return _MinusScalar(*this, scalar);
+}
+Symbol Symbol::operator*(mx_float scalar) const {
+  return _MulScalar(*this, scalar);
+}
+Symbol Symbol::operator/(mx_float scalar) const {
+  return _DivScalar(*this, scalar);
+}
 Symbol Symbol::operator[](int index) {
   SymbolHandle out;
   MXSymbolGetOutput(GetHandle(), index, &out);
@@ -301,9 +329,17 @@ Executor *Symbol::Bind(const Context &context,
   return new Executor(*this, context, arg_arrays, grad_arrays, grad_reqs,
                       aux_arrays);
 }
-
-std::string Symbol::name() const {
-  return name_;
+Symbol operator+(mx_float lhs, const Symbol &rhs) {
+  return rhs + lhs;
+}
+Symbol operator-(mx_float lhs, const Symbol &rhs) {
+  return mxnet::cpp::_RMinusScalar(lhs, rhs);
+}
+Symbol operator*(mx_float lhs, const Symbol &rhs) {
+  return rhs * lhs;
+}
+Symbol operator/(mx_float lhs, const Symbol &rhs) {
+  return mxnet::cpp::_RDivScalar(lhs, rhs);
 }
 }  // namespace cpp
 }  // namespace mxnet

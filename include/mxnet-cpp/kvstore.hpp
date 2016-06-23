@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "kvstore.h"
-#include "optimizer.h"
+#include "mxnet-cpp/kvstore.h"
+#include "mxnet-cpp/optimizer.h"
 
 #ifndef KVSTORE_HPP
 #define KVSTORE_HPP
@@ -24,7 +24,7 @@ namespace private_ {
   KVStore *kvstore = nullptr;
 
   extern "C"
-  void controller(int head, const char* body) {
+  void controller(int head, const char* body, void * controller_handle) {
     if (kvstore == nullptr) {
       return;
     }
@@ -54,6 +54,13 @@ KVStore::KVStore(const std::string& name) {
   CHECK_EQ(MXKVStoreCreate(name.c_str(), &handle_), 0);
 }
 
+KVStore::KVStore(bool async, const std::string& machine_list_path, int server_count) {
+  std::string name = async ? "dist_async" : "dist_sync";
+  name += "#" + machine_list_path;
+  name += "#" + std::to_string(server_count);
+  CHECK_EQ(MXKVStoreCreate(name.c_str(), &handle_), 0);
+}
+
 KVStore::KVStore(KVStore &&kv) {
   optimizer_ = std::move(kv.optimizer_);
   handle_ = kv.handle_;
@@ -61,11 +68,8 @@ KVStore::KVStore(KVStore &&kv) {
 }
 
 void KVStore::RunServer() {
-#ifndef USE_CHANA
-  CHECK_NE(GetRole(), "worker");
-#endif
   private_::kvstore = this;
-  CHECK_EQ(MXKVStoreRunServer(handle_, &private_::controller), 0);
+  CHECK_EQ(MXKVStoreRunServer(handle_, &private_::controller, 0), 0);
 }
 
 void KVStore::Init(int key, const NDArray& val) {
@@ -122,6 +126,28 @@ void KVStore::Pull(const std::vector<int>& keys, std::vector<NDArray>* outs, int
       out_handles.data(), priority), 0);
 }
 
+void KVStore::AllReduce(std::vector<NDArray>* vals) {
+  for (size_t i = vals->size() - 1; i > 0; --i) {
+    std::vector<mx_uint> shape = (*vals)[i].GetShape();
+    if (!shape.empty()) {
+      size_t size = 1;
+      for (size_t j = 0; j < shape.size(); j++) {
+        size *= shape[j];
+      }
+
+      MXKVAllReduce(
+        handle_,
+        ALLREDUCE_IN_PLACE,
+        (void *)((*vals)[i].GetData()),
+        size,
+        sizeof(mx_float),
+        ALLREDUCE_TYPE_DOUBLE,
+        ALLREDUCE_OP_SUM
+        );
+    }
+  }
+}
+
 namespace private_ {
   extern "C"
   void updater(int key, NDArrayHandle recv, NDArrayHandle local,
@@ -132,9 +158,6 @@ namespace private_ {
 }
 
 void KVStore::SetOptimizer(std::unique_ptr<Optimizer> optimizer, bool local) {
-#ifndef USE_CHANA
-  local = GetType().substr(0, 4) != "dist" || GetRole() != "worker";
-#endif
   if (local) {
     optimizer_ = std::move(optimizer);
     CHECK_EQ(MXKVStoreSetUpdater(handle_, &private_::updater, optimizer_.get()), 0);

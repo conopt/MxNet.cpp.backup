@@ -1,0 +1,106 @@
+#pragma warning(disable:4996)
+#include "mxnet-cpp/MxNetCpp.h"
+#include "data.h"
+#include "model.hpp"
+using namespace std;
+using namespace mxnet::cpp;
+
+vector<float> seq2onehot(const vector<float> &seq, mx_uint vocab_size)
+{
+  vector<float> onehot(seq.size() * vocab_size, 0.0f);
+  for (size_t i = 0; i < seq.size(); ++i)
+  {
+    onehot[vocab_size*i + (int)seq[i]] = 1;
+  }
+  return move(onehot);
+}
+
+const int EMB_DIM = 1000;
+const int VOCAB_SIZE = 2000;
+const int BATCH_SIZE = 1;
+int SEQ_LEN = 5; // Varies for different batch
+const Context context(DeviceType::kCPU, 0);
+// argv[1]: data path
+int main(int argc, char *argv[])
+{
+  const vector<string> param_names{
+    "Wr", "Ur", "Wrd", "Urd", "Crd",
+    "Wz", "Uz", "Wzd", "Uzd", "Czd",
+    "W", "U", "Wd", "Ud", "Cd",
+    "V", "b"
+  };
+  map<string, Symbol> params;
+  transform(param_names.begin(), param_names.end(), inserter(params, params.end()),
+    [](const string &name) {
+      return make_pair(name, Symbol::Variable(name));
+    });
+
+  map<string, NDArray> args;
+  map<string, OpReqType> reqs;
+
+  // Fake data
+  vector<float> x{0,1,2,3,4};
+  vector<float> l{0,4,3,2,1};
+  vector<float> r{4,2,3,1,0};
+
+  // x, l, r are one-hot representation of the input sentence tuple (l, x, r)
+  args["x"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["x"].SyncCopyFromCPU(seq2onehot(x, VOCAB_SIZE));
+  reqs["x"] = OpReqType::kNullOp;
+
+  args["l"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["l"].SyncCopyFromCPU(seq2onehot(l, VOCAB_SIZE));
+  reqs["l"] = OpReqType::kNullOp;
+
+  args["r"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["r"].SyncCopyFromCPU(seq2onehot(r, VOCAB_SIZE));
+  reqs["r"] = OpReqType::kNullOp;
+
+  // embedding, ith row is the embedding of ith word in vocabulary
+  args["Wemb"] = NDArray(Shape(VOCAB_SIZE, EMB_DIM), context);
+  NDArray::SampleGaussian(0, 1, &args["Wemb"]);
+  reqs["Wemb"] = OpReqType::kNullOp;
+
+  // Initialize params to be trained.
+  for (const auto& name : param_names)
+    args[name] = NDArray(Shape(EMB_DIM, EMB_DIM), context);
+  args["V"] = NDArray(Shape(EMB_DIM, VOCAB_SIZE), context);
+  //args["b"] = NDArray(Shape(VOCAB_SIZE), context);
+
+  for (const auto& name : param_names)
+    NDArray::SampleGaussian(0, 1, &args[name]);
+
+  // Build model and train
+  SkipThoughtsVector model("x", "l", "r", "Wemb", BATCH_SIZE, SEQ_LEN, EMB_DIM, VOCAB_SIZE, params);
+
+  vector<int> indices;
+  {
+    auto arguments = model.loss.ListArguments();
+    for (int i = 0; i < arguments.size(); ++i)
+      if (reqs.count(arguments[i]) == 0)
+        indices.push_back(i);
+  }
+
+  auto* exe = model.loss.SimpleBind(context, args, {}, reqs);
+  KVStore kv(true, "1ser.txt");
+  kv.RunServer();
+  for (int i = 0; i < 100; ++i)
+  {
+    if (i == 0)
+    {
+      for (auto id : indices)
+        kv.Init(id, exe->arg_arrays[id]);
+    }
+    else
+    {
+      for (auto id : indices)
+        kv.Pull(id, &exe->arg_arrays[id]);
+    }
+    exe->Forward(true);
+    exe->Backward();
+    for (auto id : indices)
+      kv.Push(id, exe->grad_arrays[id]);
+  }
+  kv.Barrier();
+  delete exe;
+}

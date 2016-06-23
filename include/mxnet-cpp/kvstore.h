@@ -10,7 +10,7 @@
 
 #include <string>
 #include <vector>
-#include "ndarray.h"
+#include "mxnet-cpp/ndarray.h"
 
 namespace mxnet {
 namespace cpp {
@@ -18,6 +18,7 @@ namespace cpp {
 class KVStore {
  public:
   explicit inline KVStore(const std::string& name = "local");
+  inline KVStore(bool async, const std::string& machine_list_path, int server_count = 1);
   KVStore(const KVStore &) = delete;
   // VS 2013 doesn't support default move constructor.
   KVStore(KVStore &&);
@@ -29,8 +30,9 @@ class KVStore {
       const std::vector<NDArray>& vals, int priority = 0);
   inline void Pull(int key, NDArray* out, int priority = 0);
   inline void Pull(const std::vector<int>& keys, std::vector<NDArray>* outs, int priority = 0);
+  inline void AllReduce(std::vector<NDArray>* vals);
   // TODO(lx): put lr in optimizer or not?
-  inline void SetOptimizer(std::unique_ptr<Optimizer> optimizer, bool local=false);
+  inline void SetOptimizer(std::unique_ptr<Optimizer> optimizer, bool local = false);
   inline std::string GetType() const;
   inline int GetRank() const;
   inline int GetNumWorkers() const;
