@@ -39,22 +39,17 @@ int main(int argc, char *argv[])
   map<string, OpReqType> reqs;
 
   // Fake data
-  vector<float> x{0,1,2,3,4};
-  vector<float> l{0,4,3,2,1};
-  vector<float> r{4,2,3,1,0};
+  vector<float> q{0,1,2,3,4};
+  vector<float> a{0,4,3,2,1};
 
-  // x, l, r are one-hot representation of the input sentence tuple (l, x, r)
-  args["x"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
-  args["x"].SyncCopyFromCPU(seq2onehot(x, VOCAB_SIZE));
-  reqs["x"] = OpReqType::kNullOp;
+  // q, a, are one-hot representations of the input sentences
+  args["q"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["q"].SyncCopyFromCPU(seq2onehot(q, VOCAB_SIZE));
+  reqs["q"] = OpReqType::kNullOp;
 
-  args["l"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
-  args["l"].SyncCopyFromCPU(seq2onehot(l, VOCAB_SIZE));
-  reqs["l"] = OpReqType::kNullOp;
-
-  args["r"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
-  args["r"].SyncCopyFromCPU(seq2onehot(r, VOCAB_SIZE));
-  reqs["r"] = OpReqType::kNullOp;
+  args["a"] = NDArray(Shape(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), context, false);
+  args["a"].SyncCopyFromCPU(seq2onehot(a, VOCAB_SIZE));
+  reqs["a"] = OpReqType::kNullOp;
 
   // embedding, ith row is the embedding of ith word in vocabulary
   args["Wemb"] = NDArray(Shape(VOCAB_SIZE, EMB_DIM), context);
@@ -71,7 +66,7 @@ int main(int argc, char *argv[])
     NDArray::SampleGaussian(0, 1, &args[name]);
 
   // Build model and train
-  SkipThoughtsVector model("x", "l", "r", "Wemb", BATCH_SIZE, SEQ_LEN, EMB_DIM, VOCAB_SIZE, params);
+  SkipThoughtsVector model("q", "a", "Wemb", BATCH_SIZE, SEQ_LEN, EMB_DIM, VOCAB_SIZE, params);
 
   vector<int> indices;
   {

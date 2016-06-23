@@ -50,16 +50,28 @@ struct SkipThoughtsVector
     std::vector<Symbol> states;
 
     // data: shape(batch, len, dim)
-    UniSkip(Symbol data, mx_uint len, std::map<std::string, Symbol>& params)
+    UniSkip(Symbol data, mx_uint len, std::map<std::string, Symbol>& params, bool reverse = false)
     {
       // (batch, len, dim) -> vector<shape(batch, dim)>
       auto words = SliceChannel(data, len, 1, true);
       // Initial state
-      states.push_back(words[0]);
-      for (mx_uint i = 1; i < len; ++i)
+      if (reverse)
       {
-        GRU gru(words[i], states.back(), params);
-        states.push_back(gru.h);
+        states.push_back(words[len-1]);
+        for (mx_uint i = len-2; i >=0; --i)
+        {
+          GRU gru(words[i], states.back(), params);
+          states.push_back(gru.h);
+        }
+      }
+      else
+      {
+        states.push_back(words[0]);
+        for (mx_uint i = 1; i < len; ++i)
+        {
+          GRU gru(words[i], states.back(), params);
+          states.push_back(gru.h);
+        }
       }
     }
   };
@@ -74,31 +86,45 @@ struct SkipThoughtsVector
       // (batch, len, dim) -> vector<shape(batch, dim)>
       auto words = SliceChannel(data, len, 1, true);
       // Initial state
-      states.push_back(words[0]);
-      for (mx_uint i = 1; i < len; ++i)
+      states.push_back(hi);
+      //states.push_back(words[0]);
+      for (mx_uint i = 0; i < len; ++i)
       {
         GRU gru(words[i], hi, states.back(), params);
         states.push_back(gru.h);
       }
+      states.erase(states.begin());
     }
   };
   Symbol loss;
 
-  // x,l,r should be one-hot
-  // can also change Wemb to pre-embedded inputs (xemb, lemb, remb)
-  SkipThoughtsVector(Symbol x, Symbol l, Symbol r, Symbol Wemb,
+  // q,a should be one-hot
+  // can also change Wemb to pre-embedded inputs (qemb, aemb)
+  SkipThoughtsVector(Symbol q, Symbol a, Symbol Wemb,
     mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
     std::map<std::string, Symbol>& params)
   {
-    auto xemb = Reshape(dot(Reshape(x, Shape(batch_size*len, vocab_size)), Wemb),
+    auto qemb = Reshape(dot(Reshape(q, Shape(batch_size*len, vocab_size)), Wemb),
       Shape(batch_size, len, emb_dim));
-    UniSkip encoder(xemb, len, params);
-    auto lemb = Reshape(dot(Reshape(l, Shape(batch_size*len, vocab_size)), Wemb),
+    auto aemb = Reshape(dot(Reshape(a, Shape(batch_size*len, vocab_size)), Wemb),
       Shape(batch_size, len, emb_dim));
-    Decoder left(lemb, encoder.states.back(), len, params);
-    auto remb = Reshape(dot(Reshape(r, Shape(batch_size*len, vocab_size)), Wemb),
-      Shape(batch_size, len, emb_dim));
-    Decoder right(remb, encoder.states.back(), len, params);
+    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params);
+  }
+
+  // q,a should be one-hot
+  SkipThoughtsVector(Symbol q, Symbol a, Symbol qemb, Symbol aemb,
+    mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
+    std::map<std::string, Symbol>& params)
+  {
+    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params);
+  }
+
+  void Init(Symbol q, Symbol a, Symbol qemb, Symbol aemb,
+    mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
+    std::map<std::string, Symbol>& params)
+  {
+    UniSkip encoder(qemb, len, params);
+    Decoder decode_ans(aemb, encoder.states.back(), len, params);
 
     Symbol V = params["V"];
     //Symbol b = params["b"];
@@ -109,24 +135,15 @@ struct SkipThoughtsVector
     std::vector<Symbol> tmp;
     Shape dist_shape(batch_size*len, vocab_size);
 
-    std::transform(left.states.begin(), left.states.end(),
+    std::transform(decode_ans.states.begin(), decode_ans.states.end(),
       inserter(tmp, tmp.end()), expand);
-    auto left_h = Reshape(Concat(tmp, tmp.size(), 1), Shape(batch_size*len, emb_dim));
+    auto ans_h = Reshape(Concat(tmp, tmp.size(), 1), Shape(batch_size*len, emb_dim));
     //auto left_dist = SoftmaxActivation(dot(left_h, V) + b);
-    auto left_dist = SoftmaxActivation(dot(left_h, V));
-    auto left_prob = Reshape(l, dist_shape) * left_dist;
-    auto left_cost = sum_axis(log(left_prob + 1e-6), -1);
-
-    tmp.clear();
-    std::transform(right.states.begin(), right.states.end(),
-      inserter(tmp, tmp.end()), expand);
-    auto right_h = Reshape(Concat(tmp, tmp.size(), 1), Shape(batch_size*len, emb_dim));
-    //auto right_dist = SoftmaxActivation(dot(right_h, V) + b);
-    auto right_dist = SoftmaxActivation(dot(right_h, V));
-    auto right_prob = Reshape(r, dist_shape) * right_dist;
-    auto right_cost = sum_axis(log(right_prob + 1e-6), -1);
+    auto ans_dist = SoftmaxActivation(dot(ans_h, V));
+    auto ans_prob = Reshape(a, dist_shape) * ans_dist;
+    auto ans_cost = sum_axis(log(ans_prob + 1e-6), -1);
 
     // Assume that MakeLoss would transform the input symbol into loss function.
-    loss = MakeLoss(left_cost + right_cost);
+    loss = MakeLoss(ans_cost);
   }
 };
