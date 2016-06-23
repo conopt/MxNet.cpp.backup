@@ -47,10 +47,11 @@ struct SkipThoughtsVector
 
   struct UniSkip
   {
+    // vector of (batch, dim)
     std::vector<Symbol> states;
 
     // data: shape(batch, len, dim)
-    UniSkip(Symbol data, mx_uint len, std::map<std::string, Symbol>& params, bool reverse = false)
+    UniSkip(Symbol data, int len, std::map<std::string, Symbol>& params, bool reverse = false)
     {
       // (batch, len, dim) -> vector<shape(batch, dim)>
       auto words = SliceChannel(data, len, 1, true);
@@ -58,7 +59,7 @@ struct SkipThoughtsVector
       if (reverse)
       {
         states.push_back(words[len-1]);
-        for (mx_uint i = len-2; i >=0; --i)
+        for (int i = len-2; i >=0; --i)
         {
           GRU gru(words[i], states.back(), params);
           states.push_back(gru.h);
@@ -67,7 +68,7 @@ struct SkipThoughtsVector
       else
       {
         states.push_back(words[0]);
-        for (mx_uint i = 1; i < len; ++i)
+        for (int i = 1; i < len; ++i)
         {
           GRU gru(words[i], states.back(), params);
           states.push_back(gru.h);
@@ -81,14 +82,14 @@ struct SkipThoughtsVector
     std::vector<Symbol> states;
 
     // data: shape(batch, len, dim)
-    Decoder(Symbol data, Symbol hi, mx_uint len, std::map<std::string, Symbol>& params)
+    Decoder(Symbol data, Symbol hi, int len, std::map<std::string, Symbol>& params)
     {
       // (batch, len, dim) -> vector<shape(batch, dim)>
       auto words = SliceChannel(data, len, 1, true);
       // Initial state
       states.push_back(hi);
       //states.push_back(words[0]);
-      for (mx_uint i = 0; i < len; ++i)
+      for (int i = 0; i < len; ++i)
       {
         GRU gru(words[i], hi, states.back(), params);
         states.push_back(gru.h);
@@ -102,29 +103,43 @@ struct SkipThoughtsVector
   // can also change Wemb to pre-embedded inputs (qemb, aemb)
   SkipThoughtsVector(Symbol q, Symbol a, Symbol Wemb,
     mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
-    std::map<std::string, Symbol>& params)
+    std::map<std::string, Symbol>& params, bool bid)
   {
     auto qemb = Reshape(dot(Reshape(q, Shape(batch_size*len, vocab_size)), Wemb),
       Shape(batch_size, len, emb_dim));
     auto aemb = Reshape(dot(Reshape(a, Shape(batch_size*len, vocab_size)), Wemb),
       Shape(batch_size, len, emb_dim));
-    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params);
+    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params, bid);
   }
 
   // q,a should be one-hot
   SkipThoughtsVector(Symbol q, Symbol a, Symbol qemb, Symbol aemb,
     mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
-    std::map<std::string, Symbol>& params)
+    std::map<std::string, Symbol>& params, bool bid)
   {
-    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params);
+    Init(q, a, qemb, aemb, batch_size, len, emb_dim, vocab_size, params, bid);
   }
 
   void Init(Symbol q, Symbol a, Symbol qemb, Symbol aemb,
     mx_uint batch_size, mx_uint len, mx_uint emb_dim, mx_uint vocab_size,
-    std::map<std::string, Symbol>& params)
+    std::map<std::string, Symbol>& params, bool bid)
   {
-    UniSkip encoder(qemb, len, params);
-    Decoder decode_ans(aemb, encoder.states.back(), len, params);
+    Symbol encoded;
+    if (bid)
+    {
+      // Bidirectional
+      UniSkip encoder_for(qemb, len, params);
+      UniSkip encoder_back(qemb, len, params, true);
+      encoded = Concat({ encoder_for.states.back(), encoder_back.states.back() }, 2, 1);
+      emb_dim *= 2;
+    }
+    else
+    {
+      UniSkip encoder(qemb, len, params);
+      encoded = encoder.states.back();
+    }
+
+    Decoder decode_ans(aemb, encoded, len, params);
 
     Symbol V = params["V"];
     //Symbol b = params["b"];

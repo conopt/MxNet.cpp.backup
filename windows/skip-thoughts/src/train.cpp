@@ -15,11 +15,13 @@ vector<float> seq2onehot(const vector<float> &seq, mx_uint vocab_size)
   return move(onehot);
 }
 
-const int EMB_DIM = 1000;
-const int VOCAB_SIZE = 2000;
-const int BATCH_SIZE = 1;
+int EMB_DIM = 1000;
+int VOCAB_SIZE = 3000;
+int BATCH_SIZE = 1;
 int SEQ_LEN = 5; // Varies for different batch
-const Context context(DeviceType::kCPU, 0);
+Context context(DeviceType::kCPU, 0);
+bool BIDIRECTIONAL = true;
+
 // argv[1]: data path
 int main(int argc, char *argv[])
 {
@@ -58,15 +60,29 @@ int main(int argc, char *argv[])
 
   // Initialize params to be trained.
   for (const auto& name : param_names)
-    args[name] = NDArray(Shape(EMB_DIM, EMB_DIM), context);
+  {
+    mx_uint dim1 = EMB_DIM;
+    mx_uint dim2 = EMB_DIM;
+    if (BIDIRECTIONAL && name.back() == 'd')
+    {
+      dim2 *= 2;
+      if (name.front() != 'W')
+        dim1 *= 2;
+    }
+    args[name] = NDArray(Shape(dim1, dim2), context);
+  }
+
   args["V"] = NDArray(Shape(EMB_DIM, VOCAB_SIZE), context);
-  //args["b"] = NDArray(Shape(VOCAB_SIZE), context);
+  if (BIDIRECTIONAL)
+  {
+    args["V"] = NDArray(Shape(EMB_DIM*2, VOCAB_SIZE), context);
+  }
 
   for (const auto& name : param_names)
     NDArray::SampleGaussian(0, 1, &args[name]);
 
   // Build model and train
-  SkipThoughtsVector model("q", "a", "Wemb", BATCH_SIZE, SEQ_LEN, EMB_DIM, VOCAB_SIZE, params);
+  SkipThoughtsVector model("q", "a", "Wemb", BATCH_SIZE, SEQ_LEN, EMB_DIM, VOCAB_SIZE, params, BIDIRECTIONAL);
 
   vector<int> indices;
   {
