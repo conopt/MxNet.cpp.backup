@@ -74,8 +74,9 @@ int main(int argc, char *argv[])
   ain = ifstream(argv[3]);
   aembin = ifstream(argv[4], ios::binary);
 
-  qembin >> EMB_DIM;
-  aembin >> EMB_DIM;
+  char newline;
+  qembin >> EMB_DIM; qembin.read(&newline, 1);
+  aembin >> EMB_DIM; aembin.read(&newline, 1);
 
   const vector<string> param_names{
     "Wr", "Ur", "Wrd", "Urd", "Crd",
@@ -123,7 +124,7 @@ int main(int argc, char *argv[])
   kv.RunServer();
   unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.5, 0));
   kv.SetOptimizer(move(opt));
-  for (int i = 0; i < 5; ++i)
+  for (int i = 0; i < 20; ++i)
   {
     auto lens = parse_input(args);
     // Build model and train
