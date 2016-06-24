@@ -2,12 +2,13 @@
 #include "mxnet-cpp/MxNetCpp.h"
 #include "data.h"
 #include "model.hpp"
+#include <algorithm>
 using namespace std;
 using namespace mxnet::cpp;
 
-vector<float> seq2onehot(const vector<float> &seq, mx_uint vocab_size)
+vector<float> seq2onehot(const vector<float> &seq, mx_uint vocab_size, mx_uint pad_len)
 {
-  vector<float> onehot(seq.size() * vocab_size, 0.0f);
+  vector<float> onehot(pad_len * vocab_size, 0.0f);
   for (size_t i = 0; i < seq.size(); ++i)
   {
     onehot[vocab_size*i + (int)seq[i]] = 1;
@@ -26,41 +27,87 @@ ifstream qin, qembin, ain, aembin;
 pair<mx_uint, mx_uint> parse_input(map<string, NDArray>& args)
 {
   char dum;
-  vector<float> q, a;
-  while (qin.peek() != '\n')
+  vector<vector<float>> q, a;
+  vector<float> buf;
+  q.reserve(BATCH_SIZE);
+  a.reserve(BATCH_SIZE);
+  size_t qlen = 0, alen = 0;
+  for (int i = 0; i < BATCH_SIZE; ++i)
   {
-    int id;
-    qin >> id;
-    q.push_back(id);
+    if (qin.eof() || ain.eof())
+      break;
+
+    buf.clear();
+    while (qin.peek() != '\n')
+    {
+      int id;
+      qin >> id;
+      buf.push_back(id);
+    }
+    qlen = max(qlen, buf.size());
+    q.push_back(move(buf));
+    qin.read(&dum, 1);
+
+    buf.clear();
+    while (ain.peek() != '\n')
+    {
+      int id;
+      ain >> id;
+      buf.push_back(id);
+    }
+    alen = max(alen, buf.size());
+    a.push_back(move(buf));
+    ain.read(&dum, 1);
   }
-  qin.read(&dum, 1);
-  while (ain.peek() != '\n')
+
+  // Ignore the last batch
+  if (q.size() != BATCH_SIZE)
+    return make_pair(0, 0);
+
+  // read q, a, which are one-hot representations of the input sentences
+  buf.reserve(BATCH_SIZE * max(qlen, alen) * VOCAB_SIZE);
+  buf.clear();
+  for (int i = 0; i < BATCH_SIZE; ++i)
   {
-    int id;
-    ain >> id;
-    a.push_back(id);
+    auto onehot = seq2onehot(q[i], VOCAB_SIZE, qlen);
+    buf.insert(buf.end(), onehot.begin(), onehot.end());
   }
-  ain.read(&dum, 1);
+  args["q"] = NDArray(Shape(BATCH_SIZE, qlen, VOCAB_SIZE), context, false);
+  args["q"].SyncCopyFromCPU(buf);
 
-  // q, a, are one-hot representations of the input sentences
-  args["q"] = NDArray(Shape(BATCH_SIZE, q.size(), VOCAB_SIZE), context, false);
-  args["q"].SyncCopyFromCPU(seq2onehot(q, VOCAB_SIZE));
+  buf.clear();
+  for (int i = 0; i < BATCH_SIZE; ++i)
+  {
+    auto onehot = seq2onehot(a[i], VOCAB_SIZE, alen);
+    buf.insert(buf.end(), onehot.begin(), onehot.end());
+  }
+  args["a"] = NDArray(Shape(BATCH_SIZE, alen, VOCAB_SIZE), context, false);
+  args["a"].SyncCopyFromCPU(buf);
 
-  args["a"] = NDArray(Shape(BATCH_SIZE, a.size(), VOCAB_SIZE), context, false);
-  args["a"].SyncCopyFromCPU(seq2onehot(a, VOCAB_SIZE));
+  // read embedded q, a
+  buf.reserve(EMB_DIM * max(qlen, alen) * BATCH_SIZE);
+  buf.resize(EMB_DIM * qlen * BATCH_SIZE);
+  memset(buf.data(), 0, buf.size() * sizeof(float));
 
-  vector<float> emb;
-  emb.resize(EMB_DIM * q.size());
-  qembin.read((char*)emb.data(), emb.size() * sizeof(float));
-  args["qemb"] = NDArray(Shape(BATCH_SIZE, q.size(), EMB_DIM), context, false);
-  args["qemb"].SyncCopyFromCPU(emb);
+  for (int i = 0; i < BATCH_SIZE; ++i)
+  {
+    size_t row_size = EMB_DIM * qlen * sizeof(float);
+    qembin.read((char*)buf.data() + row_size * i, row_size);
+  }
+  args["qemb"] = NDArray(Shape(BATCH_SIZE, qlen, EMB_DIM), context, false);
+  args["qemb"].SyncCopyFromCPU(buf);
 
-  emb.resize(EMB_DIM * a.size());
-  aembin.read((char*)emb.data(), emb.size() * sizeof(float));
-  args["aemb"] = NDArray(Shape(BATCH_SIZE, a.size(), EMB_DIM), context, false);
-  args["aemb"].SyncCopyFromCPU(emb);
+  buf.resize(EMB_DIM * alen * BATCH_SIZE);
+  memset(buf.data(), 0, buf.size() * sizeof(float));
+  for (int i = 0; i < BATCH_SIZE; ++i)
+  {
+    size_t row_size = EMB_DIM * alen * sizeof(float);
+    aembin.read((char*)buf.data() + row_size * i, row_size);
+  }
+  args["aemb"] = NDArray(Shape(BATCH_SIZE, alen, EMB_DIM), context, false);
+  args["aemb"].SyncCopyFromCPU(buf);
 
-  return make_pair(q.size(), a.size());
+  return make_pair(qlen, alen);
 }
 
 // argv[1]: query id path
@@ -124,9 +171,13 @@ int main(int argc, char *argv[])
   kv.RunServer();
   unique_ptr<Optimizer> opt(new Optimizer("ccsgd", 0.5, 0));
   kv.SetOptimizer(move(opt));
-  for (int i = 0; i < 20; ++i)
+  bool init_kv = true;
+  while (true)
   {
     auto lens = parse_input(args);
+    if (lens.first == 0 || lens.second == 0)
+      break;
+
     // Build model and train
     SkipThoughtsVector model("q", "a", "qemb", "aemb",
       BATCH_SIZE, lens.first, lens.second, EMB_DIM, VOCAB_SIZE, params, BIDIRECTIONAL);
@@ -140,10 +191,11 @@ int main(int argc, char *argv[])
     }
 
     auto* exe = model.loss.SimpleBind(context, args, {}, reqs);
-    if (i == 0)
+    if (init_kv)
     {
       for (auto id : indices)
         kv.Init(id, exe->arg_arrays[id]);
+      init_kv = false;
     }
     else
     {
