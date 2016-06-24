@@ -3,6 +3,11 @@ import numpy
 import pickle
 import os
 
+vocab_size = 20000
+
+def trim_vocab(p_vocab, p_vocab_size=40000):
+    return dict(kv for kv in p_vocab.items() if kv[1] < p_vocab_size)
+
 def trim_unk(seq, vocab):
     return [w if w in vocab else '<UNK>' for w in seq]
 
@@ -42,6 +47,10 @@ if not os.path.isfile(vocab_path):
 else:
     print('Loading vocab...')
     vocab = pickle.load(open(vocab_path, 'rb'))
+
+if len(vocab) > vocab_size:
+    print('Trimming vocab...')
+    vocab = trim_vocab(vocab, vocab_size)
 
 print('Loading embeddings')
 embedding = pickle.load(open(embedding_path, 'rb'))
