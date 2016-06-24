@@ -159,6 +159,6 @@ struct SkipThoughtsVector
     auto ans_cost = sum_axis(log(ans_prob + 1e-6), -1);
 
     // Assume that MakeLoss would transform the input symbol into loss function.
-    loss = MakeLoss(ans_cost);
+    loss = MakeLoss(0.0f - ans_cost);
   }
 };
